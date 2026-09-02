@@ -77,6 +77,40 @@ module Thecore
         File.directory?(atom_dir) && !gemspec_path_for(atom_dir).nil?
       end
 
+      # Where does `app/models/<class_name>.rb` actually live? Used by
+      # Thecore::Generators::AssociationWiring to tell whether a
+      # `references` column's target model sits in the same app/ATOM as the
+      # generator invocation (destination_root, after AtomAware's own
+      # redirection) or a different one entirely — the cross-boundary case
+      # from docs/adr/0003-migration-driven-inverse-association-wiring.md in
+      # the thecore repo, where the generator still writes the concern but
+      # only logs the gemspec/Gemfile dependency a human needs to add.
+      #
+      # Searches the host app's own app/models first, then every valid ATOM
+      # under vendor/submodules/ (deterministically, alphabetically).
+      # Returns the absolute app/ATOM root the model was found under, or nil
+      # when it isn't found anywhere (e.g. the target model doesn't exist
+      # yet) — callers should treat "not found" as "assume same app/ATOM"
+      # rather than erroring, since this is a best-effort lookup, not a
+      # requirement.
+      def model_root_for(class_name:, app_root:)
+        file_name = "#{class_name.to_s.underscore}.rb"
+        app_root = app_root.to_s
+
+        return app_root if File.exist?(File.join(app_root, "app", "models", file_name))
+
+        submodules_dir = File.join(app_root, "vendor", "submodules")
+        return nil unless File.directory?(submodules_dir)
+
+        Dir.children(submodules_dir).sort.each do |name|
+          atom_dir = File.join(submodules_dir, name)
+          next unless valid_atom_dir?(atom_dir)
+          return atom_dir if File.exist?(File.join(atom_dir, "app", "models", file_name))
+        end
+
+        nil
+      end
+
       class << self
         private
 
