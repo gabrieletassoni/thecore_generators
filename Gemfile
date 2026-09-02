@@ -10,6 +10,16 @@ gemspec
 gem "rails", "~> 7.2"
 gem "sqlite3"
 
+# Rails 7.2's rails/test_unit/line_filtering.rb overrides Minitest::Test.run
+# with a 2-arg signature (reporter, options); Minitest 6.x changed that
+# method's arity (3 args), so an unconstrained `minitest` resolves to 6.x on
+# any fresh `bundle install` (no committed Gemfile.lock -- see .gitignore)
+# and blows up every test run with "wrong number of arguments (given 3,
+# expected 1..2)" before a single test executes. Pin to the 5.x line Rails
+# 7.2 actually supports; safe to drop once this gem moves to a Rails version
+# with Minitest 6 support (e.g. Rails 8+, tracked for release/4).
+gem "minitest", "~> 5.25"
+
 # TEMPORARY (thecore_generators#4): booted into the test/dummy app purely to
 # prove -- integration-level, not just "no file was written" -- that a model
 # generated with no Api::/RailsAdmin:: concern (this ticket's whole point,
