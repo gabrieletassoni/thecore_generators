@@ -12,7 +12,10 @@ own `thecore:*`-namespaced generators or an application template. See
 in the thecore repo for the full design.
 
 **Status:** Model + Migration generator hook (Phase 1 of
-[ADR 0002](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0002-thecore-generators-gem-and-generator-hook-mechanism.md)).
+[ADR 0002](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0002-thecore-generators-gem-and-generator-hook-mechanism.md)),
+plus default-concern removal ([ADR 0001](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0001-application-record-defaults-over-generated-concerns.md))
+and migration-driven inverse-association wiring
+([ADR 0003](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0003-migration-driven-inverse-association-wiring.md)).
 `ThecoreGenerators::Railtie` registers `config.app_generators.orm :thecore, migration:
 true, timestamps: true`, so plain `rails generate model`/`rails generate migration`
 transparently apply thecore's scaffolding conventions — no new command vocabulary.
@@ -104,6 +107,32 @@ model that has no concern of its own.
 Either concern can be added independently — a model doesn't need both just because it
 needs one.
 
+### Inverse association wiring for `references` columns
+
+Rails' own generators only ever wire the owning (`belongs_to`) side of a `references`/
+`add_reference` column — the inverse `has_many`/`has_one` side has always been a manual
+follow-up. `rails generate model`/`migration` now write that missing inverse side
+automatically into the *target* model's own canonical concern
+(`config/initializers/concern_<target_model>.rb`, wired up via
+`config/initializers/after_initialize.rb`):
+
+```bash
+rails generate migration AddPostRefToComments post:references
+# → prompts: "Inverse association on Post for this reference (has_many/has_one/skip)?"
+# → writes `has_many :comments` into config/initializers/concern_post.rb
+```
+
+With a real terminal attached you're prompted for cardinality (`has_many` default, `has_one`,
+or `skip`); pass `--non-interactive` (always used by `addModel`/`addMigration` in the VS Code
+extension, and recommended for any other scripted/CI invocation) to skip the prompt and default
+straight to `has_many`. Re-running the generator against the same target model never duplicates
+an already-written association line, and a later, different reference onto the same target
+appends into the same existing concern file. When the target model lives in a different ATOM
+than the one being generated into, the concern is still written into the *invoking* app/ATOM
+(never the target's own) and the generator logs — but never edits — the gemspec/Gemfile
+dependency line a human needs to add so that include actually resolves. Full mechanics in
+`CLAUDE.md`.
+
 ## Installation
 
 Add to your host app's or ATOM's `Gemfile`:
@@ -141,6 +170,16 @@ To run a single test file:
 ```bash
 bundle exec ruby -Itest test/generators/thecore/model_generator_test.rb
 ```
+
+## Who depends on this
+
+The host backend app's own `Gemfile` (`:development` group) and the
+[Thecore VS Code extension](https://github.com/gabrieletassoni/thecore_code_extension)'s
+`addModel`/`addMigration` commands both depend on this gem being present to get Thecore-aware
+`rails generate` behavior — the extension actually checks for it and offers to add it
+automatically if it's missing, since without it `rails generate model`/`migration` still "work"
+but silently skip every convention described above. See `CLAUDE.md`'s "Who consumes this gem"
+section for detail.
 
 ## Releasing
 
