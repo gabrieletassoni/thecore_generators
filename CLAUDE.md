@@ -274,13 +274,12 @@ Key test files:
 - `test/generators/thecore/model_generator_default_concern_behavior_test.rb` — proves,
   integration-level (not just "no file was written"), that a model generated with **no**
   `Api::`/`RailsAdmin::` concern still gets a working default `json_attrs`/`navigation_label`
-  at runtime. This is why `test/dummy` **temporarily** boots real `model_driven_api` and
-  `thecore_ui_rails_admin` (plus their own transitive `thecore_backend_commons` dependency) as
-  git-based dependencies in the Gemfile — see the Gemfile's own comment for the exact pin and
-  removal condition (mirrors the identical temporary pins those two gems carry in their own
-  Gemfiles for the same `ThecoreBackendCommons::DefaultModuleRegistry` reason). None of this
-  reaches `thecore_generators.gemspec`'s actual runtime dependency (`railties` only) — a host
-  app installing this gem for real picks up none of it.
+  at runtime. This is why `test/dummy` boots real `model_driven_api` (`~> 3.9`) and
+  `thecore_ui_rails_admin` (`~> 3.8`) in the Gemfile — both resolved normally from RubyGems (no
+  pin needed; both gems, and their own `thecore_backend_commons` dependency, are published with
+  the `DefaultModuleRegistry` code this test exercises). None of this reaches
+  `thecore_generators.gemspec`'s actual runtime dependency (`railties` only) — a host app
+  installing this gem for real picks up none of it.
 - `test/generators/thecore/association_wiring_test.rb` — interactive/non-interactive cardinality
   prompt, idempotent re-runs, cross-boundary logging, header-comment presence. Builds generator
   instances directly (`Thecore::Generators::MigrationGenerator.new`/`ModelGenerator.new`) rather
