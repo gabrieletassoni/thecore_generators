@@ -1,3 +1,23 @@
+## 3.2.0
+
+- `rails generate model Foo name:string` no longer generates `Api::ModelName`/
+  `RailsAdmin::ModelName` concern files by default (ADR 0001 in the thecore repo) — the
+  no-customization case now relies entirely on the default `json_attrs`/`navigation_label`/
+  `navigation_icon` behavior that `model_driven_api`/`thecore_ui_rails_admin` `include` into
+  every `ApplicationRecord` subclass automatically
+  (`ThecoreBackendCommons::DefaultModuleRegistry`, gabrieletassoni/model_driven_api#5,
+  gabrieletassoni/thecore_ui_rails_admin#7).
+- Add `--with-api-concern`/`--with-admin-concern` class options to scaffold a starter
+  concern file — identical in shape to what the generator produced before this release —
+  for the case where customization is already known to be needed at generation time.
+- Document adding a concern by hand after the fact in the README (the common case).
+- `test/dummy` now boots real `model_driven_api`/`thecore_ui_rails_admin` (temporary
+  git-based test dependencies, see the Gemfile) so
+  `test/generators/thecore/model_generator_default_concern_behavior_test.rb` can prove,
+  at runtime, that a model generated with no concern file still works — not just that no
+  file was written.
+- See [thecore_generators#4](https://github.com/gabrieletassoni/thecore_generators/issues/4).
+
 ## 3.1.0
 
 - Register `config.app_generators.orm :thecore, migration: true, timestamps: true` in
