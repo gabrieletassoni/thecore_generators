@@ -30,21 +30,32 @@ module Thecore
 
       def initialize(*args)
         super
+        @host_app_root = destination_root
         self.destination_root = atom_dir if atom_dir
       end
+
+      # The true host-app root, captured before `destination_root` is
+      # (possibly) overridden above — for a real `rails generate` invocation
+      # this is `Rails::Command.root`, in tests whatever
+      # `Rails::Generators::TestCase` configured as `destination_root`.
+      # Unlike `destination_root` (which becomes the ATOM dir once
+      # overridden), this always stays the app root, giving
+      # Thecore::Generators::WorkspaceContext.model_root_for a stable anchor
+      # to search from regardless of where *this* invocation itself landed.
+      attr_reader :host_app_root
 
       # The absolute ATOM directory this generator's files should land in, or
       # nil for plain host-app context. Resolved once, before
       # `destination_root` is (possibly) overridden above, since the
-      # pre-override `destination_root` is the correct app-root anchor for
-      # resolving an explicit `--atom=NAME`.
+      # pre-override `destination_root` (== `host_app_root`) is the correct
+      # app-root anchor for resolving an explicit `--atom=NAME`.
       def atom_dir
         return @atom_dir if @atom_dir_resolved
 
         @atom_dir_resolved = true
         @atom_dir = Thecore::Generators::WorkspaceContext.atom_dir_for(
           cwd: Dir.pwd,
-          app_root: destination_root,
+          app_root: host_app_root,
           atom_name: options[:atom]
         )
       end

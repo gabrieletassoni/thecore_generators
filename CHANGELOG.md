@@ -1,6 +1,32 @@
 ## 3.2.0
 
-- `rails generate model Foo name:string` no longer generates `Api::ModelName`/
+- Migration-driven inverse-association wiring (ADR 0003 in the thecore repo):
+  `Thecore::Generators::MigrationGenerator` and `ModelGenerator` now detect
+  `references`/`add_reference` attributes on the migration being generated and
+  write the missing inverse `has_many`/`has_one` side into the *target*
+  model's canonical per-model concern — `config/initializers/concern_<target_model>.rb`
+  (module `Concern<TargetModel>`) plus a `TargetModel.send(:include,
+  ConcernTargetModel)` line registered in `config/initializers/after_initialize.rb`,
+  following the cross-ATOM extension pattern `GUIDE.md §4.5` already documents.
+- Interactively (a real TTY), prompts for the inverse association's
+  cardinality via Thor's own `ask`/`limited_to:` (`has_many` default,
+  `has_one`, or `skip`). Non-interactively — no TTY, or the new
+  `--non-interactive` class option, for CI/scripted/extension invocations —
+  defaults straight to `has_many` with no prompt.
+- Idempotent: re-running the generator against the same target model does not
+  duplicate an already-present association line or `after_initialize`
+  registration; a second, later migration adding a *different* reference to
+  the same target model appends into the same existing concern file.
+- Cross-boundary case: when the target model lives in a different ATOM/app
+  than the invoking one (resolved via a new `WorkspaceContext.model_root_for`
+  helper), the concern and `after_initialize` registration are still written
+  automatically into the *invoking* app/ATOM (never the target's own, per
+  ADR 0003) — only the required gemspec/Gemfile dependency line is logged to
+  the generator's own output; no dependency manifest is ever edited
+  automatically.
+- The generated concern file always carries a header comment identifying it
+  as generator-maintained.
+- See [thecore_generators#5](https://github.com/gabrieletassoni/thecore_generators/issues/5).`rails generate model Foo name:string` no longer generates `Api::ModelName`/
   `RailsAdmin::ModelName` concern files by default (ADR 0001 in the thecore repo) — the
   no-customization case now relies entirely on the default `json_attrs`/`navigation_label`/
   `navigation_icon` behavior that `model_driven_api`/`thecore_ui_rails_admin` `include` into

@@ -1,5 +1,6 @@
 require "rails/generators/active_record/model/model_generator"
 require "generators/thecore/atom_aware"
+require "generators/thecore/association_wiring"
 
 module Thecore
   module Generators
@@ -34,8 +35,16 @@ module Thecore
     #   - Test file generation is never suppressed (no `--skip-test-framework`
     #     equivalent) — `hook_for :test_framework` runs exactly as it does for
     #     `active_record:model`.
+    #   - Thecore::Generators::AssociationWiring detects `references`
+    #     attributes and writes the missing inverse `has_many`/`has_one` side
+    #     into the target model's concern (ADR 0003 in the thecore repo) —
+    #     needed here too, not just in MigrationGenerator, because
+    #     `rails generate model Foo x:references` creates its migration via
+    #     ActiveRecord::Generators::ModelGenerator#create_migration_file, a
+    #     different method than MigrationGenerator's own.
     class ModelGenerator < ActiveRecord::Generators::ModelGenerator
       include Thecore::Generators::AtomAware
+      include Thecore::Generators::AssociationWiring
 
       class_option :with_api_concern, type: :boolean, default: false,
         desc: "Scaffold a starter app/models/concerns/api/<model>.rb, included into the model " \
@@ -60,6 +69,11 @@ module Thecore
       def create_model_file
         super
         add_opted_in_concerns
+      end
+
+      def create_migration_file
+        super
+        wire_inverse_associations_from_references
       end
 
       private
