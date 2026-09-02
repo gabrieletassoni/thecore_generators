@@ -11,10 +11,37 @@ own `thecore:*`-namespaced generators or an application template. See
 [`docs/adr/0002-thecore-generators-gem-and-generator-hook-mechanism.md`](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0002-thecore-generators-gem-and-generator-hook-mechanism.md)
 in the thecore repo for the full design.
 
-**Status:** bootstrap only. This release makes the gem buildable, testable, and
-publishable — it ships no generator behaviour yet. `ThecoreGenerators::Railtie`
-(`lib/thecore_generators/railtie.rb`) is a deliberate no-op; the `config.app_generators.orm`
-hook lands in a follow-up ticket.
+**Status:** Model + Migration generator hook (Phase 1 of
+[ADR 0002](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0002-thecore-generators-gem-and-generator-hook-mechanism.md)).
+`ThecoreGenerators::Railtie` registers `config.app_generators.orm :thecore, migration:
+true, timestamps: true`, so plain `rails generate model`/`rails generate migration`
+transparently apply thecore's scaffolding conventions — no new command vocabulary.
+
+### What `rails generate model`/`rails generate migration` do now
+
+- **Context-aware placement.** `Thecore::Generators::WorkspaceContext` detects whether
+  the invoking process's `Dir.pwd` is inside a host app or an ATOM (`vendor/submodules/<atom>/`,
+  by gemspec presence — a Ruby port of `thecore_code_extension`'s `workspaceContext.js`).
+  When an ATOM is detected, the model/migration/test files land inside that ATOM's own
+  `app/models`/`db/migrate`/`test` instead of the host app's. Pass `--atom=NAME` to
+  override detection explicitly (works independent of `cwd`, e.g. from CI or the host-app
+  root).
+- **Default concerns, unchanged.** `Api::ModelName`/`RailsAdmin::ModelName` concern files
+  are generated and `include`d into the model, exactly as `thecore_code_extension`'s
+  `addModel.js` templates do today.
+- **No `Endpoints::ModelName` by default** (per
+  [ADR 0001](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0001-application-record-defaults-over-generated-concerns.md)) —
+  add one by hand, following the `after_initialize` + `class_eval` pattern, only when a
+  real custom action is needed.
+- **Test file generation is never suppressed** — a real Minitest file is generated, same
+  as Rails' own `active_record:model` default.
+- **`rails generate active_record:model`/`active_record:migration` still work directly**
+  as an escape hatch, entirely unaffected by the hook above.
+
+Both `Thecore::Generators::ModelGenerator` and `MigrationGenerator` wrap (not reimplement)
+`ActiveRecord::Generators::ModelGenerator`/`MigrationGenerator` — all attribute parsing and
+template content is inherited as-is; only file placement and the two default concerns are
+added on top.
 
 ## Installation
 
@@ -39,7 +66,7 @@ bundle exec rake test
 To run a single test file:
 
 ```bash
-bundle exec ruby -Itest test/generators/placeholder_generator_test.rb
+bundle exec ruby -Itest test/generators/thecore/model_generator_test.rb
 ```
 
 ## Releasing
