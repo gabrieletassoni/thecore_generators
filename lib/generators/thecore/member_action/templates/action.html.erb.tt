@@ -1,0 +1,16 @@
+<%%= stylesheet_link_tag 'rails_admin/actions/<%= file_name %>' %>
+<%%= form_with(url: <%= file_name %>_path, html: { method: :patch }, class: "main", id: "<%= file_name %>-form") do |f| %>
+    <div class="form-actions row justify-content-end my-3">
+        <div class="col-sm-10">
+            <input name="return_to" type="hidden" value="<%%=edit_path(@abstract_model, @object.id)%>">
+            <button class="btn btn-primary" data-disable-with="Save" name="_save" type="submit">
+            <i class="fas fa-check"></i>
+            Test
+            </button>
+        </div>
+    </div>
+<%% end %>
+<!-- The button to test the xhr get request -->
+<button id="<%= file_name %>-id" class="btn btn-primary" data-url="<%%= rails_admin.<%= file_name %>_path %>">Test <%= file_name %></button>
+<div id="<%= file_name %>-response"></div>
+<%%= javascript_include_tag "rails_admin/actions/<%= file_name %>" %>

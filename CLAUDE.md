@@ -255,6 +255,28 @@ after_initialize.rb/assets.rb ensure-and-append logic and the locale-entry merge
   has no locale file yet) — broader than `addRootAction.js`'s original behavior, which only ever
   touched `en.yml`/`it.yml`.
 
+### `Thecore::Generators::ActionCompanion` (`lib/generators/thecore/action_companion.rb`)
+
+Shared skeleton for `RootActionGenerator` and `MemberActionGenerator` (below), holding
+everything about them that is not the action file's own RailsAdmin action type/template
+content: name validation (`/\A[a-z_][a-z0-9_]*\z/` — stricter than `addRootAction.js`'s/
+`addMemberAction.js`'s own `/^[a-z0-9_]+$/`, since a leading digit would render as an invalid
+Ruby symbol literal, `topic: :1action`, in the generated action file — raises `Thor::Error`),
+`action_file_path`/`require_line` (the ATOM-vs-host-app placement split:
+`lib/<kind>s/`/`config/<kind>s/`), `assets_precompile_line`, `action_name_camel_case`,
+`title_case_name`.
+
+**Why the actual Thor task methods (`create_action_file`, `create_view_js_scss_companions`,
+etc.) still live on each generator class directly, not in this module**: `Thor::Group` (which
+`Rails::Generators::Base`/`NamedBase` extends) discovers its task list via a `method_added`
+hook that fires only for methods defined *directly* in the class's own body — never for
+methods a class merely picks up through `include`. Moving the task methods themselves into
+`ActionCompanion` was tried and broke both generators silently (nothing got created, no error)
+before this was understood — every task method must stay a thin, identically-worded one-liner
+on each generator class, delegating into this module's private logic; only that private logic
+(and the `action_kind "root_action"`/`"member_action"` class-body declaration each generator
+makes, which derives the directory name and validation wording) is actually shared.
+
 ### `Thecore::Generators::RootActionGenerator` (`lib/generators/thecore/root_action/root_action_generator.rb`, ADR 0002 Phase 2)
 
 `rails generate thecore:root_action NAME` — a Ruby port of `thecore_code_extension`'s
@@ -269,17 +291,33 @@ of the action file itself: unlike Model/Migration's templates, the action file l
 *different* relative path per context, `lib/root_actions/` in an ATOM vs `config/root_actions/`
 in the host app, mirroring `docs/adr/0001-main-app-actions-live-in-config.md` in
 `thecore_code_extension` — Zeitwerk would eager-load a constant-less action file under `lib/`
-in the host app) and `CompanionFiles` (for everything else, which *is* placed at a fixed
-relative path regardless of context). `NAME` is validated against `/\A[a-z_][a-z0-9_]*\z/`
-(stricter than `addRootAction.js`'s own `/^[a-z0-9_]+$/` — a leading digit is rejected here
-because it would render as an invalid Ruby symbol literal, `topic: :1action`, in the generated
-action file), raising `Thor::Error` otherwise. The action
-file's own template (`templates/action.rb.tt`) is a byte-for-byte port of `addRootAction.js`'s
+in the host app), `CompanionFiles` (for everything placed at a fixed relative path regardless
+of context), and `ActionCompanion` (everything else — see above). The action file's own
+template (`templates/action.rb.tt`) is a byte-for-byte port of `addRootAction.js`'s
 `action.rb` template — same `RailsAdmin::Config::Actions.add_action` body, fetch/JSON,
 `ActionCable.server.broadcast` example. `templates/action.html.erb.tt` uses Rails' own
 `<%%= %>`-escaping convention (a literal `<%%` in the `.tt` source renders as a literal `<%` in
 the generated `.html.erb`) so the *generated file's own* ERB (`stylesheet_link_tag`,
 `rails_admin.<name>_path`) survives generation-time rendering untouched.
+
+### `Thecore::Generators::MemberActionGenerator` (`lib/generators/thecore/member_action/member_action_generator.rb`, ADR 0002 Phase 2)
+
+`rails generate thecore:member_action NAME` — a Ruby port of `thecore_code_extension`'s
+`addMemberAction.js` (thecore_generators#12). Structurally identical to `RootActionGenerator`
+(same three `include`s, `action_kind "member_action"` instead of `"root_action"`, same thin
+task methods verbatim) — only its own `templates/action.rb.tt`/`action.html.erb.tt`/
+`action.js.tt` differ, a byte-for-byte port of `addMemberAction.js`'s own templates.
+**`action.rb.tt`** is the real behavioral difference: RailsAdmin `:member` action type,
+`http_methods [:get, :patch]`, controller branches on XHR GET (`request.xhr? &&
+request.get?` → JSON) vs. form PATCH (`request.patch?` → redirect), instead of Root's single
+`:root` action with a fetch/JSON + `ActionCable.server.broadcast` example. **`action.js.tt`**/
+**`action.html.erb.tt`** still set up the same `ActivityLogChannel` ActionCable subscription
+Root's do — only the test button's click handler (a plain XHR `GET` here vs. `fetch` there)
+and the added `form_with(..., method: :patch)` in the view differ; don't read "not unified
+with Root's" (CHANGELOG/README) as meaning the JS/view are wholesale different. The view also
+needs a bare (no `=`) escaped ERB tag — `<%% end %>`, closing the escaped `<%%= form_with(...)
+do |f| %>` block — proving the `<%%`-escaping convention (see Root Action above) isn't limited
+to output (`<%%=`) tags.
 
 ### `Thecore::CheckPractices` (`lib/thecore_generators/check_practices.rb`, `lib/tasks/thecore_generators_tasks.rake`, ADR 0004 Phase 2)
 
@@ -384,9 +422,10 @@ Key test files:
 - `test/generators/thecore/workspace_context_test.rb` — ATOM detection edge cases.
 - `test/generators/thecore/model_generator_test.rb` / `migration_generator_test.rb` — placement,
   ATOM redirection, `--atom=NAME` override.
-- `test/generators/thecore/root_action_generator_test.rb` — same placement/ATOM/`--atom=NAME`
-  pattern for `thecore:root_action`, plus name validation and the idempotent-rerun/broadened
-  locale-file cases specific to `CompanionFiles`.
+- `test/generators/thecore/root_action_generator_test.rb` /
+  `member_action_generator_test.rb` — same placement/ATOM/`--atom=NAME` pattern for
+  `thecore:root_action`/`thecore:member_action`, plus name validation and the
+  idempotent-rerun/broadened locale-file cases specific to `CompanionFiles`.
 - `test/tasks/check_practices_task_test.rb` — invokes `Rake::Task["thecore:check_practices"]`
   in-process against fixtures written directly into (and always cleaned up out of)
   `test/dummy` itself, per this ticket's acceptance criteria — the only test file in this gem
@@ -416,7 +455,7 @@ Key test files:
 
 ## Releasing
 
-Version lives in `lib/thecore_generators/version.rb` (currently `3.4.0`). Pushing a commit that
+Version lives in `lib/thecore_generators/version.rb` (currently `3.5.0`). Pushing a commit that
 bumps it triggers `.github/workflows/gempush.yml`, which tags the commit with that version and
 publishes to RubyGems (skipped if the tag already exists) — same pattern as the other gems in
 this ecosystem.

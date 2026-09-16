@@ -1,6 +1,7 @@
 require "rails/generators/named_base"
 require "generators/thecore/atom_aware"
 require "generators/thecore/companion_files"
+require "generators/thecore/action_companion"
 
 module Thecore
   module Generators
@@ -30,19 +31,29 @@ module Thecore
     # detected, so the view/JS/SCSS/locale/after_initialize/assets companions
     # (fixed relative paths, shared with the host-app case) land in the right
     # place automatically.
+    #
+    # The full generator step sequence (validate → create_action_file →
+    # create_view_js_scss_companions → add_after_initialize_require →
+    # add_assets_precompile_line → add_locale_entries) and everything about
+    # placement/naming lives in Thecore::Generators::ActionCompanion, shared
+    # with MemberActionGenerator (thecore_generators#12) — only this class's
+    # own `templates/action.rb.tt`/`action.html.erb.tt`/`action.js.tt` (the
+    # RailsAdmin `:root` action type and its fetch + ActionCable-broadcast
+    # example) are Root-specific.
     class RootActionGenerator < Rails::Generators::NamedBase
       include Thecore::Generators::AtomAware
       include Thecore::Generators::CompanionFiles
+      include Thecore::Generators::ActionCompanion
+
+      action_kind "root_action"
 
       source_root File.expand_path("templates", __dir__)
 
+      # Thin task methods, required on each class directly (see
+      # ActionCompanion's own comment for why) - each delegates to shared
+      # private logic there.
       def validate_action_name!
-        return if name.match?(/\A[a-z_][a-z0-9_]*\z/)
-
-        raise Thor::Error,
-          "'#{name}' is not a valid root action name - use snake_case, starting with a " \
-          "lowercase letter or underscore (a leading digit would make the generated " \
-          "`topic: :#{name}` symbol invalid Ruby)."
+        validate_action_name_for_kind!
       end
 
       def create_action_file
@@ -63,38 +74,6 @@ module Thecore
 
       def add_locale_entries
         write_action_locale_entries!(file_name, title_case_name)
-      end
-
-      private
-
-      # lib/root_actions in ATOM context (on the load path via the gemspec),
-      # config/root_actions in host-app context (not on the load path, hence
-      # the full-path require in `require_line` below) — see
-      # docs/adr/0001-main-app-actions-live-in-config.md.
-      def action_file_path
-        base_dir = atom_dir ? "lib" : "config"
-        File.join(base_dir, "root_actions", "#{file_name}.rb")
-      end
-
-      def require_line
-        if atom_dir
-          "require 'root_actions/#{file_name}'"
-        else
-          "require Rails.root.join('config', 'root_actions', '#{file_name}').to_s"
-        end
-      end
-
-      def assets_precompile_line
-        "Rails.application.config.assets.precompile += %w( rails_admin/actions/#{file_name}.js " \
-          "rails_admin/actions/#{file_name}.css )"
-      end
-
-      def action_name_camel_case
-        file_name.downcase.gsub(/[-_]([a-z0-9])/) { Regexp.last_match(1).upcase }
-      end
-
-      def title_case_name
-        file_name.split("_").map(&:capitalize).join(" ")
       end
     end
   end

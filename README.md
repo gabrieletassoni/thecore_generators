@@ -20,9 +20,9 @@ and migration-driven inverse-association wiring
 true, timestamps: true`, so plain `rails generate model`/`rails generate migration`
 transparently apply thecore's scaffolding conventions — no new command vocabulary. Phase 2
 (check_practices + Root/Member Action generators) is in progress: `rails generate
-thecore:root_action` and `rails thecore:check_practices` (Scaffold Files + Models only, below)
-ship in this release; `thecore:member_action` and check_practices' Actions check + `--fix` are
-still to come.
+thecore:root_action`, `rails generate thecore:member_action`, and `rails
+thecore:check_practices` (Scaffold Files + Models only, below) all ship in this release;
+check_practices' Actions check + `--fix` are still to come.
 
 ### What `rails generate model`/`rails generate migration` do now
 
@@ -168,8 +168,37 @@ placement the same way it does for `rails generate model`/`migration`. Re-runnin
 generator against the same action name never duplicates the require line, the precompile
 line, or a locale entry.
 
-The reusable pieces behind this (`Thecore::Generators::CompanionFiles`) are shared with the
-upcoming `thecore:member_action` generator and `check_practices --fix`.
+The reusable pieces behind this (`Thecore::Generators::CompanionFiles`,
+`Thecore::Generators::ActionCompanion`) are shared with `thecore:member_action` (below) and
+will be with `check_practices --fix`.
+
+### `rails generate thecore:member_action NAME`
+
+The Member Action counterpart to `thecore:root_action` above — a Ruby port of
+`thecore_code_extension`'s `addMemberAction.js`, sharing everything about placement, the
+after_initialize.rb/assets.rb/locale mechanics, and even the generator implementation itself
+(`Thecore::Generators::ActionCompanion`) with Root Action:
+
+```bash
+rails generate thecore:member_action my_action
+```
+
+Same file layout as Root Action (`lib/member_actions/`/`config/member_actions/`,
+`app/views/rails_admin/main/my_action.html.erb`, `.../actions/my_action.js`/`.scss`,
+after_initialize.rb require line, assets.rb precompile line, every-locale-file entry,
+`--atom=NAME`, idempotent re-run). What differs is each action's own template content — not
+unified between the two, matching `addRootAction.js`/`addMemberAction.js`'s own separate
+templates exactly:
+
+- **`action.rb`** (server-side, the real behavioral difference) — a RailsAdmin `:member`
+  action (`http_methods [:get, :patch]`) whose controller branches on `request.xhr? &&
+  request.get?` (returns JSON) vs. `request.patch?` (a form submission, redirects back to the
+  record), instead of Root's single `:root` action with a fetch/JSON + `ActionCable.server.broadcast`
+  example.
+- **`action.js`/`action.html.erb`** — both still set up the same `ActivityLogChannel`
+  ActionCable subscription Root's do; only the test button's click handler differs (a plain
+  XHR `GET` here vs. `fetch` there), and the view adds a `form_with(..., method: :patch)` for
+  the PATCH half of the example.
 
 ### `rails thecore:check_practices`
 

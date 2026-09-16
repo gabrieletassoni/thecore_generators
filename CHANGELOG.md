@@ -1,3 +1,24 @@
+## 3.5.0
+
+- Add `rails generate thecore:member_action NAME` (`Thecore::Generators::MemberActionGenerator`,
+  thecore_generators#12) — the Member Action counterpart to `thecore:root_action`, reusing
+  `Thecore::Generators::CompanionFiles` exactly as Root Action does. Its own `action.rb.tt` is
+  a faithful port of `addMemberAction.js`'s server-side template — RailsAdmin `:member` action
+  type, `http_methods [:get, :patch]`, XHR GET (JSON) + form PATCH (redirect) instead of Root's
+  single fetch/JSON + `ActionCable.server.broadcast` action — not unified with Root's. Its
+  `action.js.tt`/`action.html.erb.tt` still set up the same `ActivityLogChannel` ActionCable
+  subscription Root's do; only the test button's click handler (XHR vs. `fetch`) and the added
+  `form_with(..., method: :patch)` differ. Placement: `lib/member_actions/` in ATOM context,
+  `config/member_actions/` in host-app context (same `--atom=NAME` mechanism as every other
+  generator in this gem).
+- Extract `Thecore::Generators::ActionCompanion`, the shared skeleton
+  `RootActionGenerator`/`MemberActionGenerator` both build on (name validation, placement,
+  and the thin task-method sequence every Thor generator needs defined directly on the class
+  itself — see its own comment for why methods can't just live in a mixed-in module here).
+  `RootActionGenerator` is refactored onto it too, with no behavior change (its existing test
+  suite is unchanged and still passes).
+- See [thecore_generators#12](https://github.com/gabrieletassoni/thecore_generators/issues/12).
+
 ## 3.4.0
 
 - Add `rails thecore:check_practices` (thecore_generators#13), a Ruby port of
