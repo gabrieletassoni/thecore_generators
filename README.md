@@ -18,7 +18,10 @@ and migration-driven inverse-association wiring
 ([ADR 0003](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0003-migration-driven-inverse-association-wiring.md)).
 `ThecoreGenerators::Railtie` registers `config.app_generators.orm :thecore, migration:
 true, timestamps: true`, so plain `rails generate model`/`rails generate migration`
-transparently apply thecore's scaffolding conventions — no new command vocabulary.
+transparently apply thecore's scaffolding conventions — no new command vocabulary. Phase 2
+(check_practices + Root/Member Action generators) is in progress: `rails generate
+thecore:root_action` (below) ships in this release; `thecore:member_action` and
+`thecore:check_practices` are still to come.
 
 ### What `rails generate model`/`rails generate migration` do now
 
@@ -132,6 +135,40 @@ than the one being generated into, the concern is still written into the *invoki
 (never the target's own) and the generator logs — but never edits — the gemspec/Gemfile
 dependency line a human needs to add so that include actually resolves. Full mechanics in
 `CLAUDE.md`.
+
+### `rails generate thecore:root_action NAME`
+
+A Ruby port of `thecore_code_extension`'s `addRootAction.js` — produces the same end result
+from a terminal, with the same ATOM-aware placement `rails generate model`/`migration` use:
+
+```bash
+rails generate thecore:root_action my_action
+```
+
+This creates:
+
+- The RailsAdmin action config file — `lib/root_actions/my_action.rb` in ATOM context,
+  `config/root_actions/my_action.rb` in host-app context (main-app actions never live under
+  `lib/`, for Zeitwerk autoload safety).
+- Its view/JS/SCSS companions: `app/views/rails_admin/main/my_action.html.erb`,
+  `app/assets/javascripts/rails_admin/actions/my_action.js`,
+  `app/assets/stylesheets/rails_admin/actions/my_action.scss`.
+- A `require` line inserted into `config/initializers/after_initialize.rb` (created from a
+  skeleton if absent) — `require 'root_actions/my_action'` in ATOM context, a full
+  `Rails.root.join(...)` require in host-app context (`config/` isn't on the load path).
+- A precompile line inserted into `config/initializers/assets.rb` (created from a skeleton if
+  absent).
+- An `admin.actions.my_action` locale entry (`menu`/`title`/`breadcrumb`, all set to the
+  title-cased action name) written into **every** `*.yml` file already present under
+  `config/locales` — `en.yml`/`it.yml` are created first only when the directory has none yet.
+
+`NAME` must be snake_case (lowercase letters, digits, underscores). `--atom=NAME` overrides
+placement the same way it does for `rails generate model`/`migration`. Re-running the
+generator against the same action name never duplicates the require line, the precompile
+line, or a locale entry.
+
+The reusable pieces behind this (`Thecore::Generators::CompanionFiles`) are shared with the
+upcoming `thecore:member_action` generator and `check_practices --fix`.
 
 ## Installation
 

@@ -224,6 +224,61 @@ For each `references` attribute found:
 `--non-interactive` (`class_option`, default `false`) is declared once, in `AssociationWiring.included`,
 so it's available on both host generator classes automatically.
 
+### `Thecore::Generators::CompanionFiles` (`lib/generators/thecore/companion_files.rb`)
+
+Shared by Thecore's own custom-action generators — introduced by `RootActionGenerator`
+(thecore_generators#11), reused as-is by the upcoming `MemberActionGenerator`
+(thecore_generators#12) and, later, by `check_practices --fix`. Faithful Ruby port of the
+after_initialize.rb/assets.rb ensure-and-append logic and the locale-entry merge behavior
+`addRootAction.js`/`addMemberAction.js` share in `thecore_code_extension`:
+
+- `render_view_js_scss_companions!` — templates `action.html.erb.tt`/`action.js.tt`/
+  `action.scss.tt` (must be present in the including generator's own `source_paths`) into the
+  fixed `app/views/rails_admin/main`, `app/assets/javascripts/rails_admin/actions`,
+  `app/assets/stylesheets/rails_admin/actions` paths — the same relative paths regardless of
+  ATOM vs host-app context (only the action's own controller-config file is placed differently
+  between root and member actions). Takes no argument: the template bodies read the including
+  generator's own `file_name` (NamedBase) directly through the ERB binding `template`
+  evaluates them in, so an `action_name` parameter here would only rename the destination files
+  while the content kept using `file_name` — a silent name/content mismatch avoided by not
+  offering the parameter at all.
+- `ensure_after_initialize_require!(require_line)` / `ensure_assets_precompile_line!(precompile_line)` —
+  create `config/initializers/after_initialize.rb`/`assets.rb` from a fixed skeleton if absent,
+  then idempotently insert/append the given line (`say_status :skip` instead of duplicating on
+  a re-run). Deliberately duplicates (does not share) `AssociationWiring::AFTER_INITIALIZE_TEMPLATE`
+  below — same structure/anchor, so the two compose fine regardless of which one creates the
+  file first, but kept independent to avoid touching already-shipped Phase 1 code for this
+  ticket.
+- `write_action_locale_entries!(key, title)` — writes an `admin.actions.<key>` entry
+  (`menu`/`title`/`breadcrumb`, all set to `title`) into **every** `*.yml` file already present
+  under `config/locales` (`en.yml`/`it.yml` are created first, and only then, when the directory
+  has no locale file yet) — broader than `addRootAction.js`'s original behavior, which only ever
+  touched `en.yml`/`it.yml`.
+
+### `Thecore::Generators::RootActionGenerator` (`lib/generators/thecore/root_action/root_action_generator.rb`, ADR 0002 Phase 2)
+
+`rails generate thecore:root_action NAME` — a Ruby port of `thecore_code_extension`'s
+`addRootAction.js` (thecore_generators#11). Unlike `ModelGenerator`/`MigrationGenerator` there
+is no built-in Rails generator being overridden, so it needs no `Railtie` registration — Rails'
+own namespace-by-path convention (`generators/thecore/root_action/root_action_generator.rb` →
+`thecore:root_action`) discovers it automatically the moment a command references that
+namespace.
+
+`include`s `AtomAware` (for `atom_dir`/`host_app_root`/`--atom=NAME` — but *not* for placement
+of the action file itself: unlike Model/Migration's templates, the action file lives at a
+*different* relative path per context, `lib/root_actions/` in an ATOM vs `config/root_actions/`
+in the host app, mirroring `docs/adr/0001-main-app-actions-live-in-config.md` in
+`thecore_code_extension` — Zeitwerk would eager-load a constant-less action file under `lib/`
+in the host app) and `CompanionFiles` (for everything else, which *is* placed at a fixed
+relative path regardless of context). `NAME` is validated against `/\A[a-z0-9_]+\z/`, raising
+`Thor::Error` otherwise (mirrors `addRootAction.js`'s own snake_case validation). The action
+file's own template (`templates/action.rb.tt`) is a byte-for-byte port of `addRootAction.js`'s
+`action.rb` template — same `RailsAdmin::Config::Actions.add_action` body, fetch/JSON,
+`ActionCable.server.broadcast` example. `templates/action.html.erb.tt` uses Rails' own
+`<%%= %>`-escaping convention (a literal `<%%` in the `.tt` source renders as a literal `<%` in
+the generated `.html.erb`) so the *generated file's own* ERB (`stylesheet_link_tag`,
+`rails_admin.<name>_path`) survives generation-time rendering untouched.
+
 ## Key invariants and gotchas
 
 - **Never reimplement ActiveRecord's own generator logic.** Every override in this gem calls
@@ -271,6 +326,9 @@ Key test files:
 - `test/generators/thecore/workspace_context_test.rb` — ATOM detection edge cases.
 - `test/generators/thecore/model_generator_test.rb` / `migration_generator_test.rb` — placement,
   ATOM redirection, `--atom=NAME` override.
+- `test/generators/thecore/root_action_generator_test.rb` — same placement/ATOM/`--atom=NAME`
+  pattern for `thecore:root_action`, plus name validation and the idempotent-rerun/broadened
+  locale-file cases specific to `CompanionFiles`.
 - `test/generators/thecore/model_generator_default_concern_behavior_test.rb` — proves,
   integration-level (not just "no file was written"), that a model generated with **no**
   `Api::`/`RailsAdmin::` concern still gets a working default `json_attrs`/`navigation_label`
@@ -293,7 +351,7 @@ Key test files:
 
 ## Releasing
 
-Version lives in `lib/thecore_generators/version.rb` (currently `3.2.0`). Pushing a commit that
+Version lives in `lib/thecore_generators/version.rb` (currently `3.3.0`). Pushing a commit that
 bumps it triggers `.github/workflows/gempush.yml`, which tags the commit with that version and
 publishes to RubyGems (skipped if the tag already exists) — same pattern as the other gems in
 this ecosystem.

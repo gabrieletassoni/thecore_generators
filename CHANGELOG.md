@@ -1,3 +1,26 @@
+## 3.3.0
+
+- Add `rails generate thecore:root_action NAME` (`Thecore::Generators::RootActionGenerator`),
+  a Ruby port of `thecore_code_extension`'s `addRootAction.js`: produces the RailsAdmin root
+  action file, its view/JS/SCSS companions, the `config/initializers/after_initialize.rb`
+  require line, the `config/initializers/assets.rb` precompile line, and locale entries — from
+  a terminal, with the same ATOM-aware placement (`Thecore::Generators::AtomAware`,
+  `--atom=NAME`) the Model/Migration generators already use. In ATOM context the action file
+  lands in `lib/root_actions/`; in host-app context it lands in `config/root_actions/` with a
+  full-path `require` (Zeitwerk autoload safety — main-app actions are never on the load path).
+  Discovered automatically via Rails' own namespace-by-path convention, no Railtie registration
+  needed.
+- Add `Thecore::Generators::CompanionFiles`, a reusable module (ensuring
+  `after_initialize.rb`/`assets.rb` exist and carry the right require/precompile line
+  idempotently, rendering the shared view/JS/SCSS companion trio, and writing RailsAdmin action
+  locale entries) that the upcoming Member Action generator and `check_practices --fix` will
+  build on too.
+- Broadens the original JS's locale-entry behavior: the action's `admin.actions.<name>`
+  entry is written into **every** `*.yml` file already present under `config/locales`, not
+  just `en.yml`/`it.yml` — those two are only created as a fallback when the directory has no
+  locale file yet.
+- See [thecore_generators#11](https://github.com/gabrieletassoni/thecore_generators/issues/11).
+
 ## 3.2.0
 
 - Migration-driven inverse-association wiring (ADR 0003 in the thecore repo):
