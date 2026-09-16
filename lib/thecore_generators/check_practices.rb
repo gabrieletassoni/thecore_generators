@@ -1,15 +1,19 @@
 require "json"
+require "rails/generators"
+require "rails/generators/named_base"
 require "generators/thecore/workspace_context"
+require "generators/thecore/action_companion"
+require "generators/thecore/root_action/root_action_generator"
+require "generators/thecore/member_action/member_action_generator"
 
 module Thecore
   # `rails thecore:check_practices` — a Ruby port of thecore_code_extension's
-  # checkPractices.js, scoped to this ticket (thecore_generators#13) to the
-  # Scaffold Files check and the Model concern check (per ADR 0004 in the
-  # thecore repo). The Action Companion checks (thecore_generators#14) are
-  # deliberately not part of this module yet.
+  # checkPractices.js: the Scaffold Files check and the Model concern check
+  # (thecore_generators#13), plus the Actions check and `--fix`
+  # (thecore_generators#14, per ADR 0004 in the thecore repo).
   #
   # Unlike checkPractices.js, which only ever ran the Scaffold Files check in
-  # ATOM context, Runner applies both checks uniformly to every context root
+  # ATOM context, Runner applies every check uniformly to every context root
   # it scans — the host app root plus every ATOM under vendor/submodules/ by
   # default, or a single named ATOM.
   #
@@ -24,7 +28,11 @@ module Thecore
     # acceptance criteria specifies: file, line, message, severity, fixable,
     # code (a stable machine-readable identifier a future consumer, e.g. the
     # VS Code extension, can filter on without depending on `message` text).
-    Violation = Struct.new(:file, :line, :message, :severity, :fixable, :code, keyword_init: true) do
+    # `fix` (a zero-arg Proc, or nil) is deliberately excluded from `to_h` —
+    # it exists only for `--fix` to invoke internally, mirroring
+    # checkPractices.js's own `violation.fix.apply(ctx)` pattern; it isn't
+    # part of the public JSON contract.
+    Violation = Struct.new(:file, :line, :message, :severity, :fixable, :code, :fix, keyword_init: true) do
       def to_h
         {
           "file" => file,
@@ -37,8 +45,33 @@ module Thecore
       end
     end
 
-    def self.run(app_root:, atom_name: nil)
+    # `fix: true` applies every fixable violation in one pass (no
+    # confirmation of its own — whoever passes `fix:` has already decided),
+    # then re-scans and returns whatever violations remain, per ADR 0004:
+    # "exits non-zero whenever violations remain unresolved after any --fix
+    # pass" — this makes a fix that turns out incomplete (or a violation
+    # this ticket doesn't know how to fix, e.g. a collection_action
+    # companion) visible in the result rather than silently assumed fixed.
+    def self.run(app_root:, atom_name: nil, fix: false)
+      violations = Runner.new(app_root: app_root, atom_name: atom_name).run
+      return violations unless fix
+
+      violations.each { |v| v.fix&.call if v.fixable }
       Runner.new(app_root: app_root, atom_name: atom_name).run
+    end
+
+    # A Thor::Group instance whose only purpose is running
+    # Thecore::Generators::CompanionFiles' generic (action-kind-agnostic)
+    # after_initialize.rb/locale fixes against a specific destination_root
+    # and action name — used by Runner's Actions check for all three kinds,
+    # including collection_action, which has no generator of its own to
+    # delegate companion-file (view/JS/SCSS) rendering to. Deliberately not
+    # placed under lib/generators/ (and so never discovered as a
+    # `rails generate` namespace) — it is an internal implementation detail
+    # of check_practices' --fix, not a public command.
+    class GenericFixTarget < Rails::Generators::NamedBase
+      include Thecore::Generators::AtomAware
+      include Thecore::Generators::CompanionFiles
     end
 
     class Runner
@@ -47,13 +80,30 @@ module Thecore
       API_CONCERN_MARKERS = ["extend ActiveSupport::Concern", "cattr_accessor :json_attrs"].freeze
       RAILS_ADMIN_CONCERN_MARKERS = ["extend ActiveSupport::Concern", "rails_admin do"].freeze
 
+      ACTION_KINDS = %w[root_action member_action collection_action].freeze
+      ACTION_FILE_MARKERS = ["RailsAdmin::Config::Actions.add_action", "http_methods"].freeze
+      VIEW_MARKERS = ["stylesheet_link_tag", "javascript_include_tag"].freeze
+      JS_MARKERS = ["document.addEventListener('turbo:load'"].freeze
+      SCSS_MARKERS = ["@keyframes sk-bounce"].freeze
+      # Only root_action/member_action have a generator whose own template
+      # rendering a companion-file fix can delegate to; collection_action
+      # has none (ADR 0004: "no generator to have gotten it right" - a
+      # tracked, deliberate gap), so its missing-companion violations are
+      # never fixable.
+      ACTION_GENERATOR_CLASSES = {
+        "root_action" => Thecore::Generators::RootActionGenerator,
+        "member_action" => Thecore::Generators::MemberActionGenerator,
+      }.freeze
+
       def initialize(app_root:, atom_name: nil)
         @app_root = app_root.to_s
         @atom_name = atom_name
       end
 
       def run
-        context_roots.flat_map { |root| scaffold_file_violations(root) + model_violations(root) }
+        context_roots.flat_map do |root|
+          scaffold_file_violations(root) + model_violations(root) + action_violations(root)
+        end
       end
 
       private
@@ -143,6 +193,175 @@ module Thecore
             severity: :error, fixable: false, code: "#{type}_concern_missing_marker"
           )
         end
+      end
+
+      # --- Actions check (thecore_generators#14) ---
+
+      def action_violations(root)
+        base_dir = root == @app_root ? "config" : "lib"
+
+        ACTION_KINDS.flat_map { |kind| action_kind_violations(root, base_dir, kind) }
+      end
+
+      def action_kind_violations(root, base_dir, kind)
+        dir = File.join(root, base_dir, "#{kind}s")
+        return [] unless File.directory?(dir)
+
+        Dir.children(dir).select { |f| f.end_with?(".rb") }.sort.flat_map do |file|
+          check_action(root, base_dir, kind, File.basename(file, ".rb"))
+        end
+      end
+
+      def check_action(root, base_dir, kind, action_name)
+        action_path = File.join(root, base_dir, "#{kind}s", "#{action_name}.rb")
+        content = File.read(action_path)
+
+        ACTION_FILE_MARKERS.reject { |m| content.include?(m) }.map { |m|
+          Violation.new(
+            file: action_path, line: 0, message: "#{action_name}: missing '#{m}' marker",
+            severity: :error, fixable: false, code: "action_file_missing_marker"
+          )
+        } + check_companion(root, kind, action_name, template: "action.html.erb.tt",
+              rel_path: "app/views/rails_admin/main/#{action_name}.html.erb",
+              markers: VIEW_MARKERS, code: "companion_view") +
+          check_companion(root, kind, action_name, template: "action.js.tt",
+            rel_path: "app/assets/javascripts/rails_admin/actions/#{action_name}.js",
+            markers: JS_MARKERS, code: "companion_js") +
+          check_companion(root, kind, action_name, template: "action.scss.tt",
+            rel_path: "app/assets/stylesheets/rails_admin/actions/#{action_name}.scss",
+            markers: SCSS_MARKERS, code: "companion_scss") +
+          check_action_require_line(root, base_dir, kind, action_name) +
+          check_action_locale_entries(root, action_name)
+      end
+
+      # Renders only the one missing companion file, via the actual
+      # Root/Member Action generator's own template - never the bundled
+      # "render all three companions" method, which would risk a
+      # non-interactive file-collision hang/prompt on a hand-customized
+      # sibling file that already exists with different content. A file
+      # that exists but lost a marker is never fixable here, same as the
+      # Model check above: regenerating over it could clobber real
+      # customization; a human has to look at it.
+      #
+      # The fix re-checks `File.exist?(full_path)` at call time, not just at
+      # scan time: the same companion rel_path is kind-agnostic (e.g.
+      # app/views/rails_admin/main/<name>.html.erb), so a root_action and a
+      # member_action sharing the same action name produce two independent
+      # violations against the identical file. Without the re-check, the
+      # second violation's fix would call `template` against a file the
+      # first violation's fix just created, tripping Thor's interactive
+      # file-collision prompt during a non-interactive `--fix` run - the
+      # exact hazard this design otherwise avoids by never calling the
+      # bundled render-all-three method.
+      def check_companion(root, kind, action_name, template:, rel_path:, markers:, code:)
+        full_path = File.join(root, rel_path)
+
+        unless File.exist?(full_path)
+          generator_class = ACTION_GENERATOR_CLASSES[kind]
+          fix = generator_class && -> {
+            next if File.exist?(full_path)
+
+            build_action_generator(generator_class, action_name, root).send(:template, template, rel_path)
+          }
+          return [Violation.new(
+            file: full_path, line: 0, message: "#{action_name}: missing companion #{File.basename(rel_path)}",
+            severity: :error, fixable: !fix.nil?, code: "missing_#{code}", fix: fix
+          )]
+        end
+
+        content = File.read(full_path)
+        markers.reject { |m| content.include?(m) }.map do |m|
+          Violation.new(
+            file: full_path, line: 0, message: "#{action_name}: #{code.tr("_", " ")} missing '#{m}' marker",
+            severity: :error, fixable: false, code: "#{code}_missing_marker"
+          )
+        end
+      end
+
+      # Unlike the companion-file check above, this one applies to all
+      # three action kinds (including collection_action) - inserting a
+      # require line doesn't need a kind-specific template, just
+      # CompanionFiles' generic, already-idempotent ensure_*! helper via
+      # GenericFixTarget.
+      def check_action_require_line(root, base_dir, kind, action_name)
+        after_init_path = File.join(root, "config", "initializers", "after_initialize.rb")
+        # A missing/markerless after_initialize.rb is already reported by
+        # the Scaffold Files check - don't double-report it here, matching
+        # checkActionFile's own `if (fs.existsSync(afterInitPath))` guard.
+        return [] unless File.exist?(after_init_path)
+
+        require_line = Thecore::Generators::ActionCompanion.require_line_for(
+          kind: kind, in_atom: base_dir == "lib", name: action_name
+        )
+        return [] if File.read(after_init_path).include?(require_line)
+
+        fix = -> { fix_target(action_name, root).send(:ensure_after_initialize_require!, require_line) }
+        [Violation.new(
+          file: after_init_path, line: 0,
+          message: "#{action_name}: missing require line in after_initialize.rb",
+          severity: :error, fixable: true, code: "missing_action_require_line", fix: fix
+        )]
+      end
+
+      def check_action_locale_entries(root, action_name)
+        locales_dir = File.join(root, "config", "locales")
+        return [] unless Dir.exist?(locales_dir)
+
+        Dir.children(locales_dir).select { |f| f.end_with?(".yml") }.sort.flat_map do |file|
+          check_single_locale_entry(root, locales_dir, file, action_name)
+        end
+      end
+
+      def check_single_locale_entry(root, locales_dir, file, action_name)
+        path = File.join(locales_dir, file)
+        data = YAML.load_file(path) || {}
+        lang = data.size == 1 ? data.keys.first : File.basename(file, ".yml")
+        return [] if data.dig(lang, "admin", "actions", action_name)
+
+        title = action_name.split("_").map(&:capitalize).join(" ")
+        # write_action_locale_entries! writes into every *.yml file already
+        # present, not just this one - idempotent, so a second violation
+        # for the same action_name against another missing locale file
+        # simply re-applies the same already-correct end state.
+        fix = -> { fix_target(action_name, root).send(:write_action_locale_entries!, action_name, title) }
+        [Violation.new(
+          file: path, line: 0, message: "#{action_name}: missing locale entry in #{file}",
+          severity: :warning, fixable: true, code: "missing_action_locale_entry", fix: fix
+        )]
+      end
+
+      # `--atom=NAME` is always resolved explicitly here (never left to
+      # cwd-based detection) so a fix always lands in the exact `root` this
+      # violation was found under, regardless of the check_practices
+      # process's own invocation cwd.
+      #
+      # For a host-app violation (`root == @app_root`), `atom_name` is nil -
+      # but `AtomAware#atom_dir` treats a nil/blank `--atom` as "no override,
+      # fall back to cwd-based detection"
+      # (`Thecore::Generators::WorkspaceContext.atom_dir_for`), not as "force
+      # host-app placement". If the check_practices process's own `Dir.pwd`
+      # happens to sit inside a `vendor/submodules/<atom>/` tree at the
+      # moment `--fix` runs (e.g. invoked via an explicit `bin/rails` path
+      # rather than the `rails` executable's own directory walk-up - see
+      # WorkspaceContext's `Dir.pwd`-reset gotcha in this gem's CLAUDE.md),
+      # `AtomAware#initialize` would silently redirect the freshly-built
+      # generator's `destination_root` into that unrelated ATOM instead of
+      # `@app_root`, even though this violation was found in host-app
+      # context. Explicitly re-asserting `destination_root = root` after
+      # construction closes that gap without touching `WorkspaceContext`/
+      # `AtomAware` themselves (shared by Model/Migration/Root/Member
+      # generators) - it simply overrides whatever cwd-based guess
+      # `AtomAware#initialize` made with the exact root this violation was
+      # actually found under.
+      def build_action_generator(generator_class, action_name, root)
+        atom_name = root == @app_root ? nil : File.basename(root)
+        generator = generator_class.new([action_name], { atom: atom_name }, destination_root: @app_root)
+        generator.destination_root = root
+        generator
+      end
+
+      def fix_target(action_name, root)
+        build_action_generator(GenericFixTarget, action_name, root)
       end
     end
 

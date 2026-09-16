@@ -1,3 +1,40 @@
+## 3.6.0
+
+- Extend `rails thecore:check_practices` with the Actions check
+  (thecore_generators#14, per ADR 0004): scans `root_actions`, `member_actions`, and
+  `collection_actions` under both ATOM (`lib/`) and host-app (`config/`) context, with the
+  same generic rules for all three — `collection_actions` is scanned even though no generator
+  creates files there yet (a hand-written one could already exist and go unaudited otherwise).
+  Reports: missing/broken action-file markers, missing companion view/JS/SCSS (or a companion
+  present but missing its own marker), a missing `after_initialize.rb` require line, and a
+  missing locale entry checked against **every** `*.yml` already present in the locales
+  directory, not just `en`/`it`.
+- Add `--fix` (`rails thecore:check_practices -- --fix`, combinable with `--json`/`--atom=NAME`):
+  applies every fixable violation from this category in one pass, no confirmation of its own.
+  Companion-file fixes regenerate only the *specific* missing file by delegating straight to
+  `RootActionGenerator`'s/`MemberActionGenerator`'s own template rendering (never the bundled
+  "render all three companions" step, which could otherwise hit a non-interactive file-collision
+  hang/prompt against a hand-customized sibling file that already exists) — `collection_action`
+  companions are never fixable, since no generator exists to delegate to. Require-line and
+  locale-entry fixes are generic (work for all three kinds, via a small internal
+  `GenericFixTarget` built on `CompanionFiles`). A file/marker that already exists but lost its
+  marker is never fixable (regenerating over it could clobber real customization — same
+  principle as the Model check). After a `--fix` pass, the task re-scans and reports/exits
+  based on whatever violations remain, per ADR 0004.
+- Exit code / `--json` schema / `--atom` scoping are unchanged and now cover this category too.
+- Fix two `--fix` correctness issues found during review: a host-app violation's fix could be
+  silently misrouted into an unrelated ATOM when the check_practices process's own `Dir.pwd`
+  happened to sit inside `vendor/submodules/<atom>/` at fix time (`AtomAware#atom_dir` falls
+  back to cwd-based detection for an unset `--atom`, not host-app placement — the freshly-built
+  fix-target generator's `destination_root` is now force-set to the exact `root` the violation
+  was found under); and a companion file shared by two action kinds with the same action name
+  (the companion rel_path is kind-agnostic) could trip Thor's interactive file-collision prompt
+  on the second fix, since the target file the first fix just created was no longer missing —
+  the companion fix now re-checks `File.exist?` immediately before rendering. Also extracted the
+  `after_initialize.rb` require-line format into `ActionCompanion.require_line_for`, reused by
+  both the real generators and the Actions check, so the two can no longer drift apart.
+- See [thecore_generators#14](https://github.com/gabrieletassoni/thecore_generators/issues/14).
+
 ## 3.5.0
 
 - Add `rails generate thecore:member_action NAME` (`Thecore::Generators::MemberActionGenerator`,

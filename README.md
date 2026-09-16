@@ -18,11 +18,10 @@ and migration-driven inverse-association wiring
 ([ADR 0003](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0003-migration-driven-inverse-association-wiring.md)).
 `ThecoreGenerators::Railtie` registers `config.app_generators.orm :thecore, migration:
 true, timestamps: true`, so plain `rails generate model`/`rails generate migration`
-transparently apply thecore's scaffolding conventions — no new command vocabulary. Phase 2
-(check_practices + Root/Member Action generators) is in progress: `rails generate
-thecore:root_action`, `rails generate thecore:member_action`, and `rails
-thecore:check_practices` (Scaffold Files + Models only, below) all ship in this release;
-check_practices' Actions check + `--fix` are still to come.
+transparently apply thecore's scaffolding conventions — no new command vocabulary. **Phase 2
+(check_practices + Root/Member Action generators) is complete** as of this release: `rails
+generate thecore:root_action`, `rails generate thecore:member_action`, and `rails
+thecore:check_practices` (Scaffold Files + Models + Actions, `--fix` included) all ship.
 
 ### What `rails generate model`/`rails generate migration` do now
 
@@ -169,8 +168,9 @@ generator against the same action name never duplicates the require line, the pr
 line, or a locale entry.
 
 The reusable pieces behind this (`Thecore::Generators::CompanionFiles`,
-`Thecore::Generators::ActionCompanion`) are shared with `thecore:member_action` (below) and
-will be with `check_practices --fix`.
+`Thecore::Generators::ActionCompanion`) are shared with `thecore:member_action` (below), and
+`check_practices --fix` (further below) delegates straight to both generators' own template
+rendering rather than reimplementing it.
 
 ### `rails generate thecore:member_action NAME`
 
@@ -202,38 +202,55 @@ templates exactly:
 
 ### `rails thecore:check_practices`
 
-A Ruby port of `thecore_code_extension`'s `checkPractices.js`, scoped for now
-(thecore_generators#13) to the **Scaffold Files** check and the **Models** check — the
-**Actions** check (companion view/JS/scss/locale audit for Root/Member Actions) and `--fix`
-land in thecore_generators#14.
+A Ruby port of `thecore_code_extension`'s `checkPractices.js` — audits **Scaffold Files**
+(thecore_generators#13), **Models** (thecore_generators#13), and **Actions**
+(thecore_generators#14, `--fix` included).
 
 ```bash
 rails thecore:check_practices                       # host app + every ATOM under vendor/submodules/
 rails thecore:check_practices -- --atom=my_atom      # scope to a single ATOM
 rails thecore:check_practices -- --json              # structured output for CI/the VS Code extension
+rails thecore:check_practices -- --fix               # apply every fixable violation, no confirmation
 ```
 
 The `--` before any flag is the standard Rake convention for passing arguments through to a
 task instead of having Rake's own option parser reject them — see
 [Rake's own docs](https://ruby.github.io/rake/doc/rakefile_rdoc.html#label-Task+Arguments).
+Flags combine freely, e.g. `rails thecore:check_practices -- --atom=my_atom --fix --json`.
 
 - **Scaffold Files** — `config/initializers/after_initialize.rb` and `assets.rb` must exist
   and carry their structural marker (`Rails.application.configure do` /
   `Rails.application.config.assets.precompile`). Checked in **both** ATOM and host-app
-  context (`checkPractices.js` only ever checked ATOM context).
+  context (`checkPractices.js` only ever checked ATOM context). Not fixable.
 - **Models** — rescoped per [ADR 0001](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0001-application-record-defaults-over-generated-concerns.md):
   a model with **no** `Api::`/`RailsAdmin::` concern is the correct, no-customization default
   and is never flagged. Only two states are violations: a model `include`-ing a concern module
   whose file doesn't exist (`orphan_api_include`/`orphan_rails_admin_include`), or a concern
   file present but missing one of its required markers (`extend ActiveSupport::Concern` plus
-  `cattr_accessor :json_attrs` for `Api::`, `rails_admin do` for `RailsAdmin::`).
+  `cattr_accessor :json_attrs` for `Api::`, `rails_admin do` for `RailsAdmin::`). Not fixable —
+  regenerating over an existing, hand-edited concern could clobber real customization.
+- **Actions** — scans `root_actions`, `member_actions`, and `collection_actions` (in `lib/` for
+  an ATOM, `config/` for the host app), with the same rules for all three:
+  `collection_actions` is scanned even though no generator creates files there yet, since a
+  hand-written one could already exist and go unreported otherwise. Reports missing/broken
+  action-file markers (`RailsAdmin::Config::Actions.add_action`, `http_methods` — never
+  fixable), a missing companion view/JS/SCSS or one present but missing its own marker (a
+  *missing* companion is fixable for `root_action`/`member_action`, by delegating straight to
+  that generator's own template rendering — never for `collection_action`, which has no
+  generator to delegate to; an *existing* companion missing a marker is never fixable, same
+  reasoning as Models), a missing `after_initialize.rb` require line (fixable, all three
+  kinds), and a missing locale entry checked against **every** `*.yml` already present in the
+  locales directory, not just `en`/`it` (fixable, all three kinds).
 
 Default output is human-readable text grouped by file; `--json` emits
 `{ "violations": [{ "file", "line", "message", "severity", "fixable", "code" }] }` — `code` is
-a stable identifier (e.g. `missing_after_initialize`, `orphan_api_include`) a future consumer
-can filter on without depending on `message` text; every violation in this ticket's scope has
-`"fixable": false` (nothing here is auto-fixable yet — that's thecore_generators#14). The task
-exits non-zero whenever any violation is found, zero otherwise, so it's usable as a CI gate.
+a stable identifier (e.g. `missing_after_initialize`, `orphan_api_include`,
+`missing_companion_view`) a future consumer can filter on without depending on `message` text.
+`--fix` applies every fixable violation in one pass with no confirmation of its own — whoever
+passes it has already decided — then re-scans and reports/exits based on whatever violations
+remain (so a violation this run can't fix, e.g. a `collection_action` companion, still shows up
+after `--fix`). The task exits non-zero whenever any violation remains, zero otherwise, so it's
+usable as a CI gate either with or without `--fix`.
 
 ## Installation
 

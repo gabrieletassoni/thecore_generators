@@ -31,6 +31,27 @@ module Thecore
         base.extend(ClassMethods)
       end
 
+      # Shared require-line text for an action's `after_initialize.rb`
+      # registration - `lib/<kind>s/<name>` in ATOM context (on the load
+      # path via the gemspec), a full `Rails.root.join('config', ...)` path
+      # in host-app context (`config/` isn't on the load path). A plain
+      # module method (not routed through `ClassMethods`/`extend`, unlike
+      # `action_kind` below) so it's callable directly as
+      # `Thecore::Generators::ActionCompanion.require_line_for(...)` without
+      # an including generator instance - used both by `require_line` below
+      # (via a real generator's own `atom_dir`/`file_name`) and directly by
+      # `Thecore::CheckPractices`' Actions check, so the audit's own
+      # expectation can never drift out of sync with what a real Root/Member
+      # Action generator actually writes.
+      def self.require_line_for(kind:, in_atom:, name:)
+        dir_name = "#{kind}s"
+        if in_atom
+          "require '#{dir_name}/#{name}'"
+        else
+          "require Rails.root.join('config', '#{dir_name}', '#{name}').to_s"
+        end
+      end
+
       # A class-level accessor, not an instance `define_method`, and
       # deliberately so: any *instance* method this DSL defined directly on
       # the including generator class - even a private one, since Thor's
@@ -75,11 +96,7 @@ module Thecore
       end
 
       def require_line
-        if atom_dir
-          "require '#{action_dir_name}/#{file_name}'"
-        else
-          "require Rails.root.join('config', '#{action_dir_name}', '#{file_name}').to_s"
-        end
+        ActionCompanion.require_line_for(kind: self.class.action_kind, in_atom: !atom_dir.nil?, name: file_name)
       end
 
       def assets_precompile_line
