@@ -79,4 +79,22 @@ class Thecore::Generators::WorkspaceContextTest < ActiveSupport::TestCase
   test "atom_dir_for treats a blank atom_name the same as no override" do
     assert_nil WC.atom_dir_for(cwd: @app_root, app_root: @app_root, atom_name: "")
   end
+
+  test "all_atom_dirs returns every valid ATOM directory, alphabetically, skipping ones with no gemspec" do
+    zebra_dir = File.join(@app_root, "vendor", "submodules", "zebra_atom")
+    FileUtils.mkdir_p(zebra_dir)
+    FileUtils.touch(File.join(zebra_dir, "zebra_atom.gemspec"))
+
+    incomplete_dir = File.join(@app_root, "vendor", "submodules", "incomplete_atom")
+    FileUtils.mkdir_p(incomplete_dir)
+
+    assert_equal [@atom_dir, zebra_dir], WC.all_atom_dirs(@app_root)
+  end
+
+  test "all_atom_dirs returns an empty array when there is no vendor/submodules directory at all" do
+    bare_app_root = File.join(@tmp, "bare_app")
+    FileUtils.mkdir_p(bare_app_root)
+
+    assert_equal [], WC.all_atom_dirs(bare_app_root)
+  end
 end

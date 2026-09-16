@@ -1,3 +1,27 @@
+## 3.4.0
+
+- Add `rails thecore:check_practices` (thecore_generators#13), a Ruby port of
+  `thecore_code_extension`'s `checkPractices.js` scoped to the Scaffold Files and Models
+  checks (the Actions check and `--fix` land in thecore_generators#14):
+  - **Scaffold Files** — validates `config/initializers/after_initialize.rb`/`assets.rb`
+    exist and carry their structural marker, in **both** ATOM and host-app context (the JS
+    original only ever ran this check in ATOM context).
+  - **Models** — rescoped per ADR 0001: a model with no `Api::`/`RailsAdmin::` concern is the
+    correct default and is never flagged; only an orphan `include` (pointing at a missing
+    concern file) or a concern file present but missing a required marker is a violation.
+  - Default output is human-readable text grouped by file; `--json` emits
+    `{ "violations": [{ "file", "line", "message", "severity", "fixable", "code" }] }`.
+    Scans the host app plus every ATOM under `vendor/submodules/` by default;
+    `-- --atom=NAME` scopes to one. Exits non-zero whenever a violation is found.
+  - CLI flags are passed after a literal `--` (the standard Rake convention for passing
+    arguments through to a task), e.g. `rails thecore:check_practices -- --json --atom=foo`.
+  - `ThecoreGenerators::Railtie` now also registers a `rake_tasks` block so the task is
+    available automatically to any app depending on this gem.
+- Add `Thecore::Generators::WorkspaceContext.all_atom_dirs(app_root)`, enumerating every valid
+  ATOM directory under `vendor/submodules/` — used by `check_practices`'s default (no
+  `--atom`) scan.
+- See [thecore_generators#13](https://github.com/gabrieletassoni/thecore_generators/issues/13).
+
 ## 3.3.0
 
 - Add `rails generate thecore:root_action NAME` (`Thecore::Generators::RootActionGenerator`),

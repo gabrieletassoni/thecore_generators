@@ -20,8 +20,9 @@ and migration-driven inverse-association wiring
 true, timestamps: true`, so plain `rails generate model`/`rails generate migration`
 transparently apply thecore's scaffolding conventions — no new command vocabulary. Phase 2
 (check_practices + Root/Member Action generators) is in progress: `rails generate
-thecore:root_action` (below) ships in this release; `thecore:member_action` and
-`thecore:check_practices` are still to come.
+thecore:root_action` and `rails thecore:check_practices` (Scaffold Files + Models only, below)
+ship in this release; `thecore:member_action` and check_practices' Actions check + `--fix` are
+still to come.
 
 ### What `rails generate model`/`rails generate migration` do now
 
@@ -169,6 +170,41 @@ line, or a locale entry.
 
 The reusable pieces behind this (`Thecore::Generators::CompanionFiles`) are shared with the
 upcoming `thecore:member_action` generator and `check_practices --fix`.
+
+### `rails thecore:check_practices`
+
+A Ruby port of `thecore_code_extension`'s `checkPractices.js`, scoped for now
+(thecore_generators#13) to the **Scaffold Files** check and the **Models** check — the
+**Actions** check (companion view/JS/scss/locale audit for Root/Member Actions) and `--fix`
+land in thecore_generators#14.
+
+```bash
+rails thecore:check_practices                       # host app + every ATOM under vendor/submodules/
+rails thecore:check_practices -- --atom=my_atom      # scope to a single ATOM
+rails thecore:check_practices -- --json              # structured output for CI/the VS Code extension
+```
+
+The `--` before any flag is the standard Rake convention for passing arguments through to a
+task instead of having Rake's own option parser reject them — see
+[Rake's own docs](https://ruby.github.io/rake/doc/rakefile_rdoc.html#label-Task+Arguments).
+
+- **Scaffold Files** — `config/initializers/after_initialize.rb` and `assets.rb` must exist
+  and carry their structural marker (`Rails.application.configure do` /
+  `Rails.application.config.assets.precompile`). Checked in **both** ATOM and host-app
+  context (`checkPractices.js` only ever checked ATOM context).
+- **Models** — rescoped per [ADR 0001](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0001-application-record-defaults-over-generated-concerns.md):
+  a model with **no** `Api::`/`RailsAdmin::` concern is the correct, no-customization default
+  and is never flagged. Only two states are violations: a model `include`-ing a concern module
+  whose file doesn't exist (`orphan_api_include`/`orphan_rails_admin_include`), or a concern
+  file present but missing one of its required markers (`extend ActiveSupport::Concern` plus
+  `cattr_accessor :json_attrs` for `Api::`, `rails_admin do` for `RailsAdmin::`).
+
+Default output is human-readable text grouped by file; `--json` emits
+`{ "violations": [{ "file", "line", "message", "severity", "fixable", "code" }] }` — `code` is
+a stable identifier (e.g. `missing_after_initialize`, `orphan_api_include`) a future consumer
+can filter on without depending on `message` text; every violation in this ticket's scope has
+`"fixable": false` (nothing here is auto-fixable yet — that's thecore_generators#14). The task
+exits non-zero whenever any violation is found, zero otherwise, so it's usable as a CI gate.
 
 ## Installation
 

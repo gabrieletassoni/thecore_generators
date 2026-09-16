@@ -21,5 +21,9 @@ module ThecoreGenerators
   # `--help`, it never blocks direct namespace invocation.
   class Railtie < ::Rails::Railtie
     config.app_generators.orm :thecore, migration: true, timestamps: true
+
+    rake_tasks do
+      load File.expand_path("../tasks/thecore_generators_tasks.rake", __dir__)
+    end
   end
 end

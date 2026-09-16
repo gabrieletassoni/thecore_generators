@@ -77,6 +77,20 @@ module Thecore
         File.directory?(atom_dir) && !gemspec_path_for(atom_dir).nil?
       end
 
+      # Every valid ATOM directory under `<app_root>/vendor/submodules/`,
+      # deterministically (alphabetically) ordered. Used by
+      # Thecore::CheckPractices to scan the host app plus every ATOM in one
+      # pass when no `--atom=NAME` is given.
+      def all_atom_dirs(app_root)
+        submodules_dir = File.join(app_root.to_s, "vendor", "submodules")
+        return [] unless File.directory?(submodules_dir)
+
+        Dir.children(submodules_dir).sort.filter_map do |name|
+          atom_dir = File.join(submodules_dir, name)
+          atom_dir if valid_atom_dir?(atom_dir)
+        end
+      end
+
       # Where does `app/models/<class_name>.rb` actually live? Used by
       # Thecore::Generators::AssociationWiring to tell whether a
       # `references` column's target model sits in the same app/ATOM as the

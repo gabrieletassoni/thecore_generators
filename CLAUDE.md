@@ -270,14 +270,72 @@ of the action file itself: unlike Model/Migration's templates, the action file l
 in the host app, mirroring `docs/adr/0001-main-app-actions-live-in-config.md` in
 `thecore_code_extension` — Zeitwerk would eager-load a constant-less action file under `lib/`
 in the host app) and `CompanionFiles` (for everything else, which *is* placed at a fixed
-relative path regardless of context). `NAME` is validated against `/\A[a-z0-9_]+\z/`, raising
-`Thor::Error` otherwise (mirrors `addRootAction.js`'s own snake_case validation). The action
+relative path regardless of context). `NAME` is validated against `/\A[a-z_][a-z0-9_]*\z/`
+(stricter than `addRootAction.js`'s own `/^[a-z0-9_]+$/` — a leading digit is rejected here
+because it would render as an invalid Ruby symbol literal, `topic: :1action`, in the generated
+action file), raising `Thor::Error` otherwise. The action
 file's own template (`templates/action.rb.tt`) is a byte-for-byte port of `addRootAction.js`'s
 `action.rb` template — same `RailsAdmin::Config::Actions.add_action` body, fetch/JSON,
 `ActionCable.server.broadcast` example. `templates/action.html.erb.tt` uses Rails' own
 `<%%= %>`-escaping convention (a literal `<%%` in the `.tt` source renders as a literal `<%` in
 the generated `.html.erb`) so the *generated file's own* ERB (`stylesheet_link_tag`,
 `rails_admin.<name>_path`) survives generation-time rendering untouched.
+
+### `Thecore::CheckPractices` (`lib/thecore_generators/check_practices.rb`, `lib/tasks/thecore_generators_tasks.rake`, ADR 0004 Phase 2)
+
+`rails thecore:check_practices` — a Ruby port of `thecore_code_extension`'s
+`checkPractices.js` (thecore_generators#13), scoped for now to the **Scaffold Files** and
+**Models** checks. The **Actions** check (companion view/JS/scss/locale audit for
+Root/Member Actions, mirroring `checkActionFile` in the JS original) and `--fix` are
+thecore_generators#14 — not implemented here.
+
+Deliberately namespaced at the top level (`Thecore::CheckPractices`, not
+`Thecore::Generators::CheckPractices`) since it is a plain audit service, not a
+`Rails::Generators` subclass — the rake task is its only entry point, wired up via
+`ThecoreGenerators::Railtie`'s `rake_tasks do load ... end` block (the same `Rails::Railtie`
+mechanism every engine uses to expose its own rake tasks to a host app; this is separate from
+and in addition to the Railtie's `config.app_generators.orm :thecore` registration).
+
+- **`Thecore::CheckPractices::Runner`** — `#run` scans one or more context roots: the host app
+  plus every ATOM under `vendor/submodules/` by default (via
+  `Thecore::Generators::WorkspaceContext.all_atom_dirs` — an empty array, so just the host app,
+  on a host app with no `vendor/submodules/` directory at all, or none checked out yet — nothing
+  here requires ATOMs to be present), or a single named one when `atom_name:` is given, resolved
+  by delegating straight to `WorkspaceContext.atom_dir_for` (the same call `AtomAware`'s
+  `--atom=NAME` makes) rather than re-deriving that resolution/error-message logic here — it
+  raises `Thor::Error` on an unknown name, which the rake task rescues directly. For each root:
+  `after_initialize.rb`/`assets.rb` existence + marker presence, then every `app/models/*.rb`'s
+  `Api::`/`RailsAdmin::` concern state (orphan `include` vs. present-but-missing-marker — see
+  ADR 0001/0004 above the Model section of this file; the `include` match uses a negative
+  lookahead, not a plain substring check, so `include Api::FooBar` is never mistaken for
+  `include Api::Foo`). Deliberately does **not** port `checkPractices.js`'s
+  `hasUnreplacedTokens` (leftover-`{{`) check: that was a symptom specific to the old JS
+  string-templating system, meaningless for this gem's ERB-rendered output.
+- **`Thecore::CheckPractices::Violation`** — a `Struct` (`file`, `line`, `message`,
+  `severity`, `fixable`, `code`); `#to_h` matches the ticket's JSON schema exactly, in that key
+  order. Every violation in this ticket's scope has `fixable: false`.
+- **`Thecore::CheckPractices::Reporter`** — `.text(violations)` (default, grouped by file) and
+  `.json(violations)` (`{ "violations" => [...] }`).
+
+**CLI flags require a literal `--` separator** (`rails thecore:check_practices -- --json
+--atom=NAME`) — Rake's own `Rake::Application#standard_rake_options` uses a strict
+`OptionParser` on the raw command line and raises `invalid option: --json` for anything it
+doesn't recognize itself, *before* the task body ever runs (verified directly against this
+gem's own `test/dummy`). Everything from a literal `--` onward is left untouched at the front
+of `ARGV` for the task body to parse with its own `OptionParser` — the standard, documented
+Rake idiom for passing CLI-style flags through to a task
+(https://ruby.github.io/rake/doc/rakefile_rdoc.html#label-Task+Arguments). A bare
+`rails thecore:check_practices` (no `--`) is unaffected — `ARGV.drop_while { |a| a != "--" }`
+simply yields an empty array when no separator is present.
+
+The task calls `exit(1)` when any violation is found (never `exit(0)` on success — a rake task
+that completes without calling `exit` already yields process exit code 0). **Any test that
+invokes the task in-process must rescue `SystemExit`** (see
+`test/tasks/check_practices_task_test.rb`'s `invoke_task` helper) — Minitest deliberately
+treats `SystemExit` as a pass-through exception it does not catch, so an unrescued `exit(1)`
+inside a test method kills the entire test process silently instead of just failing that one
+test (this was hit and fixed during thecore_generators#13's own implementation — the fix is
+documented in the test helper itself as a warning to future editors).
 
 ## Key invariants and gotchas
 
@@ -329,6 +387,13 @@ Key test files:
 - `test/generators/thecore/root_action_generator_test.rb` — same placement/ATOM/`--atom=NAME`
   pattern for `thecore:root_action`, plus name validation and the idempotent-rerun/broadened
   locale-file cases specific to `CompanionFiles`.
+- `test/tasks/check_practices_task_test.rb` — invokes `Rake::Task["thecore:check_practices"]`
+  in-process against fixtures written directly into (and always cleaned up out of)
+  `test/dummy` itself, per this ticket's acceptance criteria — the only test file in this gem
+  that mutates `test/dummy` rather than a `Rails::Generators::TestCase` tmp `destination_root`.
+  Covers both context types, `--atom=NAME` scoping and its unknown-atom error, the ADR
+  0001/0004 model-check rescoping (zero violations for a concern-less model, orphan include,
+  missing marker), text vs. `--json` output shape, and the exit-code contract.
 - `test/generators/thecore/model_generator_default_concern_behavior_test.rb` — proves,
   integration-level (not just "no file was written"), that a model generated with **no**
   `Api::`/`RailsAdmin::` concern still gets a working default `json_attrs`/`navigation_label`
@@ -351,7 +416,7 @@ Key test files:
 
 ## Releasing
 
-Version lives in `lib/thecore_generators/version.rb` (currently `3.3.0`). Pushing a commit that
+Version lives in `lib/thecore_generators/version.rb` (currently `3.4.0`). Pushing a commit that
 bumps it triggers `.github/workflows/gempush.yml`, which tags the commit with that version and
 publishes to RubyGems (skipped if the tag already exists) — same pattern as the other gems in
 this ecosystem.

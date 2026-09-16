@@ -20,3 +20,13 @@ require "rails/generators/test_case"
 # silently skipping migration file creation in every test. Must run before
 # any test file requires a generators/thecore/**/*_generator.rb file.
 Rails.application.load_generators
+
+# Mirrors the load_generators call above, for the same reason: a real `rails
+# thecore:check_practices` invocation goes through Rails' command layer,
+# which calls this itself before running any rake task (registering every
+# Railtie's `rake_tasks` block, thecore_generators#13's `check_practices`
+# task included) - Rails::Generators::TestCase-style in-process tests never
+# go through that layer, so it must be triggered explicitly here, once, for
+# every test file that invokes Rake::Task["thecore:check_practices"].
+require "rake"
+Rails.application.load_tasks
