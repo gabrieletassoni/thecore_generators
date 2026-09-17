@@ -22,6 +22,12 @@ transparently apply thecore's scaffolding conventions — no new command vocabul
 (check_practices + Root/Member Action generators) is complete** as of this release: `rails
 generate thecore:root_action`, `rails generate thecore:member_action`, and `rails
 thecore:check_practices` (Scaffold Files + Models + Actions, `--fix` included) all ship.
+**Phase 3's App application template** (porting `createApp.js`) is landing in two tickets —
+the core (`lib/templates/app_template.rb`: Rails app + Gemfile stack + vendor placeholders,
+thecore_generators#17) ships in this release; devcontainer/CI/CLAUDE.md asset fetching from
+the thecore repo's own samples (thecore_generators#18) is a follow-up. See
+[ADR 0005](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0005-app-template-scoped-to-rails-new-m-assets-sourced-from-thecore-samples.md)
+in the thecore repo for the full design.
 
 ### What `rails generate model`/`rails generate migration` do now
 
@@ -251,6 +257,44 @@ passes it has already decided — then re-scans and reports/exits based on whate
 remain (so a violation this run can't fix, e.g. a `collection_action` companion, still shows up
 after `--fix`). The task exits non-zero whenever any violation remains, zero otherwise, so it's
 usable as a CI gate either with or without `--fix`.
+
+### Application Template (`rails new -m`) — core (thecore_generators#17)
+
+A Ruby port of `thecore_code_extension`'s `createApp.js`, as a genuine Rails application
+template rather than a `thecore:*` generator — its entry point is `rails new -m`, not `rails
+generate`:
+
+```bash
+rails new myapp --database=postgresql --asset-pipeline=sprockets \
+  -m https://raw.githubusercontent.com/gabrieletassoni/thecore_generators/release/3/lib/templates/app_template.rb
+```
+
+This ticket covers the app-level scaffolding only — Gemfile and the two developer-convenience
+vendor directories. Devcontainer/CI/CLAUDE.md generation (fetched from the `thecore` repo's own
+`samples/`) is a separate, follow-up piece (thecore_generators#18); see
+[ADR 0005](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0005-app-template-scoped-to-rails-new-m-assets-sourced-from-thecore-samples.md)
+for why the two are split and why the samples live in `thecore`, not here.
+
+- **Core Gemfile stack, active** — `devise`, `cancancan`, `rails_admin`, `sassc-rails`,
+  `model_driven_api`, `thecore_ui_rails_admin`, `rails-erd` (`:development`). `thecore_generators`
+  itself is added too, `group: :development` — so the generated app can immediately use every
+  generator/task documented above without a manual Gemfile edit first.
+- **The rest of the generic Thecore ecosystem, commented out** — `thecore_auth_commons`,
+  `thecore_settings`, `thecore_print_commons`, `thecore_background_jobs`, `thecore_ui_commons`,
+  `thecore_tcp_debug`, `thecore_download_documents`, `thecore_dataentry_commons`,
+  `thecore_connectors`, each with a one-line purpose comment — discoverable but off by default,
+  the same "commented but documented" philosophy ADR 0005 applies to the devcontainer's `gh`/
+  `glab` CLI mounts (ticket #18).
+- **`vendor/submodules/`/`vendor/external/`** — created empty (a `.keep` file each), not
+  pre-wired with any submodule or gem. Per ADR 0005 these are developer-convenience clone
+  locations, not template content.
+- **The standard installer chain** (`devise:install`, `rails_admin:install`, `active_storage:
+  install`, `action_text:install`, `action_mailbox:install`, `cancan:ability`, `erd:install`,
+  each preceded by the necessary `bundle install`) is genuinely optional, gated behind an
+  interactive prompt (`yes?`, wrapped in `after_bundle` so it only ever runs once the gems
+  above are actually bundled) — a developer bootstrapping without network access can decline
+  and run these by hand later. There is no non-interactive/unattended flag for this in the
+  current version (tracked as a future improvement, not silently missing).
 
 ## Installation
 

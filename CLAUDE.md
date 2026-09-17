@@ -448,6 +448,108 @@ during thecore_generators#14's own implementation — an incompletely-cleaned `-
 effect (an unaccounted-for companion directory, or a rewritten `config/locales/en.yml`) leaks
 into the next test's fixture state and produces flaky, order-dependent failures.
 
+### The App Application Template (`lib/templates/app_template.rb`, ADR 0005 Phase 3 — core, thecore_generators#17)
+
+A Ruby port of `thecore_code_extension`'s `createApp.js` (thecore_generators#16's spec) — but
+a genuine **Rails application template**, not a `Thor::Group` generator like everything above.
+Its entry point is `rails new -m`, evaluated by `Rails::Generators::AppGenerator#apply_rails_template`
+directly against the file (a plain Ruby script executed with `self` bound to the `AppGenerator`
+instance, giving it access to `Rails::Generators::Actions`' template DSL: `gem`, `append_to_file`,
+`empty_directory`, `create_file`, `yes?`, `after_bundle`, `generate`, `rails_command`,
+`bundle_command`) — there is no `Railtie`/namespace-discovery mechanism involved the way
+`thecore:root_action`/`thecore:member_action` have, since `rails new -m <path-or-url>` is how
+every Rails application template is invoked, full stop.
+
+This ticket (#17) is deliberately **core only** — Gemfile content and the two developer-
+convenience vendor directories — with no dependency on anything outside this gem. Devcontainer/
+CI/CLAUDE.md generation, fetched from the `thecore` repo's own `samples/` at generation time, is
+a separate follow-up (thecore_generators#18); see
+[ADR 0005](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0005-app-template-scoped-to-rails-new-m-assets-sourced-from-thecore-samples.md)
+in the thecore repo for why the two are split and why those assets live in `thecore`, not
+duplicated here.
+
+**Why `gem`/`append_to_file`, not `createApp.js`'s `fs.readFileSync`/`writeFileSync` approach**:
+`createApp.js` hand-reads and hand-writes the whole `Gemfile` as a string (see its own
+`insertGemIntoDevelopmentGroup` regex-based insertion in `thecore_code_extension`) because JS has
+no equivalent to Rails' own template DSL. This template uses the real thing instead —
+`Rails::Generators::Actions#gem` appends a correctly-formatted `gem "name", "version", group:
+:development` line itself; `thecore_generators`'s own dev-only dependency is a single-line
+`group:` option rather than createApp.js's manual `group :development do ... end` block-nesting
+logic, since Bundler treats the two forms identically. The commented-out ecosystem block (below)
+can't use `gem` at all — that method only ever writes an *active* line — so it's a plain
+`append_to_file` with hand-written `# gem "..." # comment` text instead.
+
+**Why the installer chain is wrapped in `after_bundle`, not called directly at the top level**:
+`AppGenerator`'s own build sequence runs `apply_rails_template` (this file, in full) *before*
+`run_bundle` (its own automatic `bundle install` of everything the skeleton + this template's own
+`gem` calls just added to the Gemfile) — see `public_task` ordering in `railties`'
+`rails/generators/rails/app/app_generator.rb`. Any `generate "devise:install"`-style call made at
+the template's own top level would therefore run against a Gemfile that hasn't been bundled yet,
+failing outright (the `devise` gem isn't installed/loadable). `after_bundle do ... end` is Rails'
+own mechanism for exactly this ordering problem: `run_after_bundle_callbacks` (a separate
+`public_task`, after `run_bundle`) invokes every registered block only once bundling has actually
+happened.
+
+**The installer chain is genuinely optional, not a test-only escape hatch** — gated behind a real
+interactive `yes?` prompt ("Run `bundle install` and the standard installer generators ... now?"),
+matching this ticket's "uses Thor's `ask`/`yes?` DSL for any genuine choice point" acceptance
+criterion honestly: a developer bootstrapping without network access can decline and run
+`bundle install && rails generate devise:install && ...` by hand once they have connectivity, and
+the Gemfile/vendor-directory content is written either way, regardless of the answer.
+`run_after_bundle_callbacks` calls every registered `after_bundle` block **unconditionally** —
+even when `--skip-bundle` was passed to `rails new` itself (it is not gated by `bundle_install?`
+the way `run_bundle` is) — so the `yes?` answer captured at top level (before the `after_bundle`
+block is even defined, closed over by it) is what actually prevents `bundle_command`/`generate`
+from running when the caller doesn't want them to, not `--skip-bundle` alone.
+
+**The installer chain fails fast, mirroring `createApp.js`'s own atomic `&&`-chained shell
+command**: neither `bundle_command` (a bare `system` call, no result check at all) nor
+`rails_command` (only aborts when `abort_on_failure: true` is passed explicitly — `generate`
+already sets that internally, confirmed against `railties`' own `actions.rb`) abort on failure by
+default, so both `bundle_command` calls check their own return value and `abort` explicitly, and
+every plain `rails_command` call (`active_storage:install`/`action_text:install`/
+`action_mailbox:install`) passes `abort_on_failure: true`. Only two `bundle_command("install")`
+calls remain, not three: `devise:install`/`rails_admin:install` add nothing new to bundle beyond
+what the first call already covers (`rails_admin:install --asset=sprockets`'s own
+`configure_for_sprockets` only re-adds `sassc-rails`, already declared active above — a harmless,
+empirically-verified duplicate Gemfile line, not a new dependency), so the second call sits after
+`action_text:install`, which can add its own `image_processing` dependency.
+
+**The RailsAdmin route is never written, not written-then-stripped**: `rails_admin:install`'s own
+`_namespace` positional argument (passed as `"app"` here — RailsAdmin's own mount-path argument,
+not a placeholder) exists purely to skip its interactive mount-path prompt, since nothing in this
+non-interactive chain could ever answer it. `thecore_ui_rails_admin` already mounts
+`RailsAdmin::Engine` itself, in its own engine routes — so a `route(...)` call *before* invoking
+the installer writes a commented placeholder line containing the exact substring
+(`"mount RailsAdmin::Engine"`) `RailsAdmin::InstallGenerator#install` checks for
+(`routes.rb.include?('mount RailsAdmin::Engine')`) to decide whether to insert its own mount line
+at all — so it never adds one, no fragile after-the-fact `gsub_file` removal needed.
+
+**Testing** (`test/templates/app_template_test.rb`) is the one seam this whole feature is tested
+through, per the spec (thecore_generators#16) — a **real subprocess** (`Open3.capture3("bundle",
+"exec", "rails", "new", ...)`), not an in-process `Rails::Generators::AppGenerator.start` call:
+this test suite already boots a full `Rails::Application` (`test/dummy`) in-process for every
+other test file in this gem, and running a second, unrelated `rails new` inside that same process
+is an unnecessary risk to court for no benefit. Two things make it offline and deterministic
+(this ticket's own acceptance criteria, and independently necessary — see above):
+`--skip-bundle` stops Rails' own automatic bundle of the newly-added gems; the test feeds `"no\n"`
+via `stdin_data:` to the template's own `yes?` prompt, so the installer chain's `bundle_command`/
+`generate` calls are never reached either.
+
+**The subprocess's `chdir` must not be this gem's own root** (or anywhere under this host backend
+repo) — plain `rails` (`railties`' `exe/rails`, via `Rails::AppLoader.exec_app`) walks *up* the
+directory tree from `cwd` looking for a `bin/rails` to delegate to, `Dir.chdir("..")`-ing at every
+step, *before* it ever runs as the `rails new` generator (the exact same gotcha the "Dir.pwd
+cannot be trusted..." invariant below already documents, biting a different caller here). This
+gem is nested inside this host backend repo (`.scratch/thecore_generators` during development),
+which has its own `bin/rails` a few directories up — `chdir`'d there, that walk-up silently execs
+the *host app's* `bin/rails` instead of generating a new app (hit directly while writing this
+test — the failure surfaced as a `bootsnap/setup` `LoadError` from the host app's own
+`config/boot.rb`, not an obviously-relevant message). The fix: `chdir` into the scratch tmp
+directory itself (which has no `bin/rails` anywhere in its ancestry) and set `BUNDLE_GEMFILE`
+explicitly to this gem's own `Gemfile` — `BUNDLE_GEMFILE`, not `cwd`-based Gemfile discovery, is
+what tells Bundler which bundle's `rails` to resolve.
+
 ## Key invariants and gotchas
 
 - **Never reimplement ActiveRecord's own generator logic.** Every override in this gem calls
@@ -542,7 +644,7 @@ Key test files:
 
 ## Releasing
 
-Version lives in `lib/thecore_generators/version.rb` (currently `3.6.0`). Pushing a commit that
+Version lives in `lib/thecore_generators/version.rb` (currently `3.7.0`). Pushing a commit that
 bumps it triggers `.github/workflows/gempush.yml`, which tags the commit with that version and
 publishes to RubyGems (skipped if the tag already exists) — same pattern as the other gems in
 this ecosystem.

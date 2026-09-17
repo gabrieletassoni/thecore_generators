@@ -1,3 +1,22 @@
+## 3.7.0
+
+- Add the App application template core (`lib/templates/app_template.rb`,
+  thecore_generators#17, ADR 0005 in the thecore repo) — a genuine Rails application
+  template (`rails new -m`, not a `thecore:*` generator), porting `createApp.js`'s
+  Gemfile/vendor-directory behavior. Adds the standard Gemfile stack (devise,
+  cancancan, rails_admin, sassc-rails, `model_driven_api` ~> 3.9, `thecore_ui_rails_admin`
+  ~> 3.8 — both bumped to match this gem's own ADR 0001 `DefaultModuleRegistry` floor —
+  plus `thecore_generators` itself as a `:development` dependency), a commented,
+  discoverable-but-optional block for the rest of the generic Thecore ecosystem gems, and
+  empty `vendor/submodules/`/`vendor/external/` placeholder directories (developer
+  convenience only, not template content — see ADR 0005). The standard installer chain
+  (devise/rails_admin/active_storage/action_text/action_mailbox/cancan/erd) is gated
+  behind a genuine interactive `yes?` prompt, wrapped in `after_bundle` so it only runs
+  once the gems above are actually bundled, and fails fast (mirroring `createApp.js`'s
+  own atomic `&&`-chained shell command) rather than silently limping on if a step fails.
+  Devcontainer/CI/CLAUDE.md asset generation, fetched from the `thecore` repo's own
+  `samples/`, is a separate follow-up (thecore_generators#18).
+
 ## 3.6.0
 
 - Extend `rails thecore:check_practices` with the Actions check
