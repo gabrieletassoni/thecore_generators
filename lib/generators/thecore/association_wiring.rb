@@ -1,4 +1,5 @@
 require "generators/thecore/workspace_context"
+require "generators/thecore/tty_detection"
 
 module Thecore
   module Generators
@@ -114,7 +115,7 @@ module Thecore
       # includer was explicitly told not to prompt via --non-interactive) -
       # default straight to has_many, per ADR 0003.
       def interactive_association_prompt?
-        !options[:non_interactive] && $stdin.tty? && $stdout.tty?
+        !options[:non_interactive] && Thecore::Generators::TtyDetection.real_tty?
       end
 
       def concern_path_for(target_class_name)

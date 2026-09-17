@@ -331,6 +331,156 @@ needs a bare (no `=`) escaped ERB tag — `<%% end %>`, closing the escaped `<%%
 do |f| %>` block — proving the `<%%`-escaping convention (see Root Action above) isn't limited
 to output (`<%%=`) tags.
 
+### `Thecore::Generators::AtomGenerator` (`lib/generators/thecore/atom/atom_generator.rb`, thecore_generators#20, ADR 0006)
+
+`rails generate thecore:atom NAME` — a Ruby port of `thecore_code_extension`'s `createATOM.js`.
+Structurally unlike every other generator in this gem: it does **not** `include
+Thecore::Generators::AtomAware` and declares no `--atom=NAME` option, since creating a *new* ATOM
+only ever makes sense from a host app's own root — `destination_root` stays fixed at that root
+for the entire generator run, and every path this class writes is expressed relative to it via
+the private `atom_root` method (`"vendor/submodules/#{file_name}"`), rather than via
+`AtomAware`'s `destination_root=` redirection trick.
+
+**Two Gemfiles, one `#gem` action** — the host app's own (`destination_root/Gemfile`) and the
+freshly-scaffolded ATOM's own (`vendor/submodules/<name>/Gemfile`) are both mutated, but only
+the first can go through `Rails::Generators::Actions#gem` (used once, in
+`add_gem_to_host_gemfile`): that method's own implementation always writes via `in_root { ... }`,
+and `Thor::Actions#in_root` is hardcoded to `inside(@destination_stack.first) { yield }` — the
+*original* destination_root, not whatever `inside` might currently have pushed onto the stack.
+So `#gem` can never be redirected into a nested path no matter how it's wrapped. The ATOM's own
+Gemfile is instead mutated via plain `append_to_file` calls against an explicit relative path
+(`File.join(atom_root, "Gemfile")`) — no `inside` needed there at all, since `create_file`/
+`template`/`append_to_file`/`gsub_file`/`empty_directory` all resolve their given path against
+the *current* `destination_root` (`@destination_stack.last`, via the public `destination_root`
+reader), which never moves in this generator.
+
+**`inside("vendor/submodules") { run(...) }` is reserved for the two places that need a real,
+OS-level `Dir.chdir`** — `create_rails_engine`'s `bundle exec rails plugin new` shell-out, and
+`git_init_and_commit`'s `git init`/`git add`/`git commit` — since `Thor::Actions#run` shells out
+via bare `system`/`Open3`, which only respects the process's actual cwd, not Thor's own
+path-prefixing logic. `inside` does both: it pushes onto `@destination_stack` (redirecting
+`destination_root` for the duration, irrelevant here since these blocks don't create files
+directly) **and** does a real `FileUtils.cd`, which is the part that matters for `run`.
+
+**Why `bundle exec rails plugin new`, not `createATOM.js`'s bare `rails plugin new`**: a
+deliberate addition over the JS original, which shells a bare `rails` relying entirely on
+whatever's globally on `PATH`. In the real host-app case this costs nothing — cwd already sits
+under that app's own Gemfile either way (`vendor/submodules` is a subdirectory of the app;
+`bundle exec`'s own upward Gemfile search, or the plain `rails` walk-up to `bin/rails`, both
+land on the same place) — but it makes gem resolution explicit rather than incidental, and it's
+what makes the generator's own test suite tractable at all (see below).
+
+**Gemspec rewriting reads once, applies one in-memory pass of targeted substitutions, writes
+once** — not `createATOM.js`'s own blind "rewrite every line, branch on substring" approach
+(verified directly against a real `rails plugin new --full` gemspec, Rails 7.2.3.2, rather than
+assumed from the JS original, which predates several Rails releases — the template has moved on
+meaningfully: new `homepage_uri` line, different summary/description wording, a real `license`
+line; a full-file line-by-line port would silently stop matching several fields), and not one
+`gsub_file` call per field either (an early draft did this — 8 separate full read-modify-write
+cycles against the same small gemspec file, caught in review as wasted I/O for no benefit; the
+one-read/one-write shape now matches `setup_gemfile`'s own single-append design just below it).
+One deliberate correctness fix along the way: the JS's `.add_dependency` branch *replaces* the
+whole matched line, which happens to be `spec.add_dependency "rails", ...` in current Rails —
+silently dropping the gem's own Rails dependency entirely whenever the two Thecore dependencies
+are added. `setup_gemspec` appends its two lines right after that one instead of replacing it.
+
+**Three guards catch real, observed collision hazards, all added during review after being
+reproduced directly against this very host app's own `vendor/submodules/mytask`**:
+- `validate_atom_name!` (the very first task method) restricts `NAME` to
+  `/\A[a-z][a-z0-9_-]*\z/` — lowercase, starting with a letter, digits/underscore/hyphen only
+  (matching real examples in this ecosystem, including the hyphenated
+  `thecore-spot-overrides`). Without it, a space in `NAME` (the exact example text both
+  `createATOM.js`'s and this generator's own prompts suggest, "TCP Debugger") word-splits the
+  unescaped shell-out in `create_rails_engine` into two arguments, silently creating an engine
+  named only the first word while every later step keeps operating on a path nothing actually
+  created; a shell metacharacter (`; touch /tmp/pwned`) executes arbitrary commands; and a
+  namespaced name (`acme/widget`) desyncs `atom_root` (which uses only `file_name`, `"widget"`)
+  from `class_name` (`"Acme::Widget"`, used in the `abilities.rb` template), producing a
+  `NameError: uninitialized constant Abilities::Acme` the moment the generated ATOM boots.
+  `create_rails_engine` also `Shellwords.escape`s `file_name` regardless, as defense in depth.
+- `ensure_atom_does_not_already_exist!` refuses a `NAME` whose `vendor/submodules/<name>`
+  directory already exists. Without it, `rails plugin new`'s own `-f` (force) flag suppresses
+  Thor's normal file-collision prompt entirely, so `rails generate thecore:atom mytask` in this
+  very host app would silently overwrite the real, populated `mytask` submodule's Gemfile,
+  gemspec, and `lib/mytask/engine.rb` with freshly-generated plugin-skeleton content.
+- `add_gem_to_host_gemfile` checks the host Gemfile for an existing `gem "<name>"` line before
+  appending a second one — the identical collision, one layer up: `mytask` is already declared
+  there (`gem 'mytask', '~> 3.20'`, resolved from a gem server), and a blind append would leave
+  two conflicting entries for the same gem name, which `bundle install`/`bundle exec` then
+  refuses outright ("You cannot specify the same gem twice"). Kept as its own explicit check
+  rather than relying solely on the `vendor/submodules` guard above, since a Gemfile entry and a
+  `vendor/submodules` directory are two independent pieces of state that could in principle
+  drift apart (e.g. a submodule removed by hand without touching the Gemfile).
+
+**No `.gitignore` is written** (verified directly, not assumed: a fresh `rails plugin new --full`
+output has no log/tmp/sqlite artifacts anywhere in the tree yet — nothing has been bundled or
+run against the dummy app at the point the initial commit happens, so it's clean regardless).
+`createATOM.js`'s own custom gitignore-fetch step is out of this ticket's scope entirely (and
+was never revisited to reflect the mattpocock-skills-era `.claude`/`.bundle`/`.gem` mount
+patterns the App template's own `samples/` assets now carry) — a candidate for a future ticket
+if the growing dummy-app tree ever makes an unignored initial commit less clean than verified
+here.
+
+**`git_init_and_commit`** — `-fG` (`rails plugin new`'s own force+skip-git flags) means no git
+repo exists yet at this point. This generator narrows that gap, per ADR 0006, without fully
+closing it: a local `git init -b master` + one commit (authored as the `--author`/`--email` the
+generator just collected, via `-c user.name=.../-c user.email=...` rather than relying on
+whatever global git config happens to be present), then `say_status`-logs the exact
+`git remote add`/`git submodule add` follow-up commands — worded generically, no GitHub/GitLab
+assumption — rather than creating a remote repository or running `git submodule add` itself
+(deliberately out of scope, ADR 0006: an irreversible, credential-dependent, cross-boundary
+action a human should confirm, matching how `AssociationWiring`'s own cross-boundary dependency
+wiring already only *logs* what a human needs to add, never edits a gemspec/Gemfile for them).
+The `git commit` call itself is deliberately not `abort_on_failure: true` (unlike `git init`/
+`git add` just before it) — a freshly-generated tree always has something to commit in normal
+use, but `git commit` failing for any reason at that point shouldn't kill the whole process via
+a raw, unexplained `Kernel#abort` when every file this generator actually promises has already
+been written successfully. Its result (`run`'s own return value, propagated back out through
+`inside`'s block) still gates *which* message gets logged, though — caught in review: an earlier
+version dropped `abort_on_failure` but kept logging the "here are your next-steps commands"
+message unconditionally, which would misinform a developer about a commit that actually failed
+for a real reason (not just "nothing to commit"). A failed commit now logs a distinct warning
+instead of the next-steps message.
+
+**Prompts fall back to non-interactive behavior on more than just an explicit `--non-interactive`
+flag** — `effectively_non_interactive?` (used by `validate_non_interactive_options!`,
+`required_field`, and `collect_api_admin_deps_choice` alike) also treats "no real TTY behind
+stdin/stdout" as non-interactive, via the shared `Thecore::Generators::TtyDetection.real_tty?`
+(`lib/generators/thecore/tty_detection.rb`) — a small module extracted during this ticket's own
+review after it turned out `AssociationWiring`'s existing `interactive_association_prompt?` (a
+named invariant in this gem's own CLAUDE.md, below) had already implemented the identical
+condition independently; both now share one implementation rather than two that could silently
+drift apart. Without this fallback, a caller with no real TTY (CI, a shelled-out child process)
+that simply forgot `--non-interactive` would hit `required_field`'s `ask`-in-a-loop, which spins
+forever re-prompting a stream that can never supply input — Thor's `ask` returns `nil`
+immediately on a closed/EOF stdin, so the validator never passes and the loop never exits.
+Unlike `AssociationWiring`'s equivalent fallback (a sensible default, `has_many`, with no data
+lost), there's no sensible default for `thecore:atom`'s free-text fields, so the TTY-detected
+case routes through the same "missing flags" abort path `--non-interactive` explicitly triggers,
+rather than silently inventing placeholder text.
+
+**Testing** (`test/generators/thecore/atom_generator_test.rb`) is `Rails::Generators::TestCase`
+like every other generator here — but its `destination` is deliberately **not** under this gem's
+own `tmp/` (unlike every sibling test file): `create_rails_engine`'s nested `bundle exec rails
+plugin new` shell-out hits the exact same "`Rails::AppLoader.exec_app` walks *up* the directory
+tree from cwd looking for a `bin/rails` to delegate to" trap `test/templates/app_template_test.rb`
+already documents and hit directly while writing thecore_generators#17 — this gem lives nested
+under the host backend repo, which has its own `bin/rails` a few directories up, and a
+`destination_root` under this gem's own `tmp/` would silently delegate into the *host app's*
+`bin/rails` instead of running `plugin new` generically (reproduced directly while writing this
+generator: the exact same `bootsnap/setup` `LoadError` symptom). The fix is the same one that
+ticket already established: `destination` under the system tmp dir (`Dir.tmpdir`, outside any
+Rails app's ancestry, so the walk-up finds nothing to delegate to) rather than a manually-set
+`BUNDLE_GEMFILE` — the test process's own `BUNDLE_GEMFILE` (set by the outer `bundle exec rake
+test` invocation) is already inherited by the shelled child process without any extra test-side
+plumbing, since `Thor::Actions#run`'s `system` call inherits the parent process's environment by
+default. `setup` also writes a minimal stub `Gemfile` at `destination_root` (a real host app
+always has one; `Rails::Generators::Actions#gem`'s own `append_file_with_newline` call in
+`add_gem_to_host_gemfile` errors on a missing file otherwise) and pre-creates `vendor/submodules`
+(the generator's own first guard check requires it). Despite spawning a real `rails plugin new`
+subprocess, the whole four-test file runs in under a second — no `bundle install`/test-run ever
+happens against the freshly generated dummy app, only file generation.
+
 ### `Thecore::Generators::CollectionActionGenerator` (`lib/generators/thecore/collection_action/collection_action_generator.rb`, thecore_generators#21, ADR 0006)
 
 `rails generate thecore:collection_action NAME` — the third sibling to `RootActionGenerator`/
@@ -713,6 +863,13 @@ Key test files:
   placement/ATOM/`--atom=NAME` pattern for `thecore:root_action`/`thecore:member_action`/
   `thecore:collection_action`, plus name validation and the idempotent-rerun/broadened
   locale-file cases specific to `CompanionFiles`.
+- `test/generators/thecore/atom_generator_test.rb` — `thecore:atom`'s own guard checks (missing
+  `vendor/submodules`, an invalid/shell-unsafe name, an already-existing `vendor/submodules/
+  <name>`, missing `--non-interactive` flags), one full end-to-end generation each for the
+  default (API/Admin deps included) and `--skip-api-admin-deps` paths, and a Gemfile-collision
+  case (an existing `gem "tcp_debugger", ...` line in the host Gemfile is never duplicated) —
+  see `AtomGenerator`'s own CLAUDE.md section above for why its `destination` isn't under this
+  gem's own `tmp/` the way every other generator test's is.
 - `test/support/check_practices_fixtures.rb` — shared fixture-writing/cleanup/task-invocation
   helpers (`write_fixture`, `register_cleanup_for`, `snapshot_existing_file!`,
   `register_action_fix_cleanup!`, `invoke_task`/`invoke_with_argv`) for both
@@ -761,7 +918,7 @@ Key test files:
 
 ## Releasing
 
-Version lives in `lib/thecore_generators/version.rb` (currently `3.9.0`). Pushing a commit that
+Version lives in `lib/thecore_generators/version.rb` (currently `3.10.0`). Pushing a commit that
 bumps it triggers `.github/workflows/gempush.yml`, which tags the commit with that version and
 publishes to RubyGems (skipped if the tag already exists) — same pattern as the other gems in
 this ecosystem.

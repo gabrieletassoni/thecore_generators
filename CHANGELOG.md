@@ -1,3 +1,35 @@
+## 3.10.0
+
+- Add `rails generate thecore:atom NAME` (`Thecore::Generators::AtomGenerator`,
+  thecore_generators#20, per ADR 0006 in the thecore repo) — a Ruby port of
+  `thecore_code_extension`'s `createATOM.js`, producing a complete, working ATOM
+  end-to-end from a terminal: no VS Code, no extension required. Wraps `rails plugin
+  new --full` and layers on the same Scaffold Files/CI/Gemfile conventions
+  `createATOM.js` already produces, with several deliberate corrections along the
+  way: `model_driven_api`/`thecore_ui_rails_admin` (now an interactive `yes?`,
+  default yes, not unconditional) are added at this gem's own ADR 0001 version floor
+  (`~> 3.9`/`~> 3.8`), not the stale `~> 3.1`/`~> 3.2`; the generated `gempush.yml`'s
+  two long-standing bugs are fixed (a broken `awk` pipeline; `version_exists`
+  referenced in `if:` conditions but never actually set, meaning the tag/publish
+  steps have never run); the gemspec's own `rails` dependency is no longer silently
+  dropped when the two Thecore dependencies are added (the JS original's blind
+  line-replacement did exactly that); and the new ATOM directory is `git init`'d
+  with one local commit, with remote creation/`git submodule add` left as a logged,
+  human-run follow-up rather than automated. Both GitHub Actions and GitLab CI files
+  are always generated unconditionally — no hosting-profile prompt — since which git
+  host a developer pushes to is a per-developer choice this ecosystem already treats
+  as generic, not something worth gating behind interactivity. `CLAUDE.md` fetching
+  from the thecore repo's own `samples/` is a separate follow-up
+  (thecore_generators#22).
+- Takes no `--atom=NAME` option, unlike every other generator in this gem — creating
+  a *new* ATOM only ever makes sense from a host app's own root, so it doesn't
+  include `Thecore::Generators::AtomAware` at all.
+- `--non-interactive` plus matching `--summary=`/`--description=`/`--author=`/
+  `--email=`/`--url=`/`--skip-api-admin-deps` flags, consistent with every other
+  generator in this gem — aborts immediately, listing exactly which required flags
+  are missing, rather than silently defaulting to placeholder text.
+- See [thecore_generators#20](https://github.com/gabrieletassoni/thecore_generators/issues/20).
+
 ## 3.9.0
 
 - Add `rails generate thecore:collection_action NAME` (`Thecore::Generators::CollectionActionGenerator`,

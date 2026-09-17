@@ -32,10 +32,12 @@ thecore:collection_action`, thecore_generators#21) is also complete as of this r
 [ADR 0006](https://github.com/gabrieletassoni/thecore/blob/master/docs/adr/0006-atom-generator-dual-ci-manual-submodule-wiring-collection-action-reuses-existing-infra.md)
 in the thecore repo (`master`, thecore's actual default branch — unlike this gem's own
 `release/3`; the ADR 0001-0005 links above predate that distinction being double-checked; note
-that as of this gem's 3.9.0 release the ADR 0006 commit exists only in a local `thecore`
+that as of this gem's 3.10.0 release the ADR 0006 commit exists only in a local `thecore`
 checkout, not yet pushed to `origin/master` — same class of operational sequencing issue
-`CLAUDE.md` documents for the App template's samples fetch). The `thecore:atom` generator
-remains in progress (thecore_generators#20/#22).
+`CLAUDE.md` documents for the App template's samples fetch). **The `thecore:atom` generator**
+core (`rails generate thecore:atom NAME`, thecore_generators#20) is also complete as of this
+release; its `CLAUDE.md`-fetch extension (thecore_generators#22, blocked on the same ADR 0006
+samples work) is the one piece of Phase 4 still outstanding.
 
 ### What `rails generate model`/`rails generate migration` do now
 
@@ -213,6 +215,66 @@ templates exactly:
   ActionCable subscription Root's do; only the test button's click handler differs (a plain
   XHR `GET` here vs. `fetch` there), and the view adds a `form_with(..., method: :patch)` for
   the PATCH half of the example.
+
+### `rails generate thecore:atom NAME`
+
+A Ruby port of `thecore_code_extension`'s `createATOM.js` — produces a complete, working ATOM
+(a Rails engine, the Thecore unit of modular functionality) from a terminal, no VS Code
+required:
+
+```bash
+rails generate thecore:atom tcp_debugger
+```
+
+Unlike every other generator in this gem, `thecore:atom` takes **no `--atom=NAME` option** —
+creating a *new* ATOM only ever makes sense from a host app's own root, so it doesn't include
+`Thecore::Generators::AtomAware` at all. It fails fast with a clear error if `vendor/submodules/`
+doesn't exist yet in the current app, if `NAME` isn't a valid gem name (lowercase letters,
+digits, underscores, hyphens, starting with a letter), or if `vendor/submodules/<NAME>` already
+exists — the last one matters because `rails plugin new`'s own `-f` (force) flag would otherwise
+silently overwrite an existing ATOM with the same name.
+
+It prompts (interactively, or via `--summary=`/`--description=`/`--author=`/`--email=`/`--url=`
+with `--non-interactive`) for the same five fields `createATOM.js` always has, then:
+
+- Shells to `rails plugin new <path> -fG --skip-gemfile-entry --skip-hotwire --full` (via
+  `bundle exec`, for robust gem resolution regardless of environment), producing the standard
+  Rails engine skeleton.
+- Asks (`yes?`-style, default yes; `--skip-api-admin-deps` in non-interactive mode) whether to
+  add `model_driven_api`/`thecore_ui_rails_admin` as dependencies — at this gem's own ADR 0001
+  floor (`~> 3.9`/`~> 3.8`), not `createATOM.js`'s stale `~> 3.1`/`~> 3.2`. Declining adds
+  neither; the Scaffold Files/directories below are created either way.
+- Creates the same Scaffold Files/directories `createATOM.js` always has: `db/migrate`, the
+  API/RailsAdmin concern directories, `config/initializers`, `config/locales`,
+  `lib/root_actions`/`member_actions`/`collection_actions`, JS/CSS asset directories, the
+  RailsAdmin main view directory, `.github/workflows` — plus `after_initialize.rb`/`assets.rb`/
+  `abilities.rb`, `db/seeds.rb`, and `en.yml`/`it.yml` locale files, all with the same skeleton
+  content `createATOM.js` already produces.
+- Generates **both** `.github/workflows/gempush.yml` and `.gitlab-ci.yml` unconditionally — no
+  hosting-profile prompt (see ADR 0006 for why: which git host a developer pushes to is a
+  per-developer choice this ecosystem already treats as generic). `gempush.yml`'s two
+  long-standing bugs are fixed here (a broken `awk` pipeline computing the version string; a
+  `version_exists` check referenced in `if:` conditions but never actually set, so the
+  tag/publish steps have never run for any ATOM generated this way). The gemspec's
+  `allowed_push_host` stays hardcoded to `https://rubygems.org`.
+- Rewrites the gemspec's authors/email/homepage/summary/description/metadata fields via targeted
+  in-memory substitutions (not `createATOM.js`'s own blind full-file line rewrite, which —
+  verified directly against a current `rails plugin new --full` gemspec — silently drops the
+  gem's own `rails` dependency when adding the two Thecore ones; this appends instead of
+  replacing).
+- `git init`s the new ATOM directory with one initial commit, then **logs** (never runs) the
+  exact follow-up commands to create a remote and `git submodule add` it into the host app —
+  worded generically, no GitHub/GitLab assumption (ADR 0006: automating a remote-repo-creating,
+  credential-dependent step isn't something this generator does on your behalf).
+- Adds `gem "<name>", path: "vendor/submodules/<name>"` to the host app's own `Gemfile` (via
+  Thor's own `gem` action) — skipped, with a warning, if the Gemfile already declares a gem with
+  that name (the same real collision the `vendor/submodules/<NAME>` guard above protects against,
+  one layer up: a duplicate entry for the same gem breaks the next `bundle install`). Does
+  **not** run `bundle install` — same as every other generator in this gem that touches a
+  Gemfile.
+
+`CLAUDE.md` fetching from the thecore repo's own `samples/` (mirroring the App template's own
+asset-fetch mechanism) is a separate follow-up, thecore_generators#22.
 
 ### `rails generate thecore:collection_action NAME`
 

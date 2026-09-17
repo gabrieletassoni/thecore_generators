@@ -1,0 +1,1 @@
+puts "Seeding Data into DB from <%= file_name %>"
