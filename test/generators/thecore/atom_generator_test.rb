@@ -6,7 +6,16 @@ require "tmpdir"
 class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
   tests Thecore::Generators::AtomGenerator
 
-  GEM_ROOT = File.expand_path("../../../..", __dir__)
+  GEM_ROOT = File.expand_path("../../..", __dir__)
+
+  # Same fixture tree test/templates/app_template_test.rb already points
+  # THECORE_SAMPLES_SOURCE at (thecore_generators#18/#22) - reused, not
+  # duplicated, so the two test suites can never drift on what "the samples
+  # fixture" contains. Anchored off GEM_ROOT (not a hand-counted "../../" from
+  # this file's own nesting depth) so it stays correct if either test file ever
+  # moves - app_template_test.rb's own copy of this constant predates this one
+  # and still uses the hand-counted form.
+  SAMPLES_FIXTURE_DIR = File.join(GEM_ROOT, "test", "fixtures", "thecore_samples")
 
   # Deliberately NOT under this gem's own tmp/ (unlike every other generator test in
   # this suite) - #create_rails_engine shells out to a real `bundle exec rails
@@ -31,9 +40,16 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     "--url=https://github.com/example/tcp_debugger",
   ].freeze
 
+  # point_samples_source_at_fixture! runs first, deliberately: if a later setup
+  # callback raises, teardown still runs, and restore_samples_source! must have
+  # something real to restore rather than wiping out a developer's own exported
+  # THECORE_SAMPLES_SOURCE for the rest of the (single, shared - no parallel
+  # workers in this suite) test process.
+  setup :point_samples_source_at_fixture!
   setup :prepare_destination
   setup :create_vendor_submodules_dir!
   setup :create_host_gemfile!
+  teardown :restore_samples_source!
 
   test "fails with a clear error when vendor/submodules doesn't exist yet" do
     FileUtils.rm_rf(File.join(destination_root, "vendor"))
@@ -139,6 +155,10 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     assert_file "Gemfile" do |content|
       assert_match(/gem "tcp_debugger", path: "vendor\/submodules\/tcp_debugger"/, content)
     end
+
+    assert_file "#{atom}/CLAUDE.md" do |content|
+      assert_equal File.read(File.join(SAMPLES_FIXTURE_DIR, "ATOM_CLAUDE.md")), content
+    end
   end
 
   test "--skip-api-admin-deps omits model_driven_api/thecore_ui_rails_admin from the Gemfile, gemspec, and entry file" do
@@ -179,10 +199,35 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     end
   end
 
+  # Exercises just #fetch_claude_md directly, the same "build the generator
+  # instance, call the one method under test" pattern
+  # association_wiring_test.rb already established - the happy-path CLAUDE.md
+  # fetch itself is covered as part of the full end-to-end test above (it needs
+  # a real `vendor/submodules/tcp_debugger` on disk anyway, already paid for by
+  # that test's own `rails plugin new` run), so this only needs to prove the
+  # *failure* path, which doesn't need the engine scaffolded at all - skipping
+  # the expensive subprocess spawn entirely.
+  test "a CLAUDE.md fetch failure aborts with a clear message naming the file/source/error" do
+    ENV["THECORE_SAMPLES_SOURCE"] = File.join(Dir.tmpdir, "thecore_generators_atom_test_missing_samples")
+    generator = Thecore::Generators::AtomGenerator.new(["tcp_debugger"], {}, destination_root: destination_root)
+
+    error = assert_raises(SystemExit) { generator.send(:fetch_claude_md) }
+    assert_match(/Failed to fetch ATOM_CLAUDE\.md/, error.message)
+  end
+
   private
 
   def create_vendor_submodules_dir!
     FileUtils.mkdir_p(File.join(destination_root, "vendor", "submodules"))
+  end
+
+  def point_samples_source_at_fixture!
+    @original_samples_source = ENV["THECORE_SAMPLES_SOURCE"]
+    ENV["THECORE_SAMPLES_SOURCE"] = SAMPLES_FIXTURE_DIR
+  end
+
+  def restore_samples_source!
+    ENV["THECORE_SAMPLES_SOURCE"] = @original_samples_source
   end
 
   def create_host_gemfile!

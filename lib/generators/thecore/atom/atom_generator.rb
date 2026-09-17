@@ -1,5 +1,6 @@
 require "rails/generators/named_base"
 require "generators/thecore/tty_detection"
+require "generators/thecore/sample_fetcher"
 require "shellwords"
 require "yaml"
 
@@ -342,6 +343,38 @@ module Thecore
         create_file gemspec_path, content, force: true
       end
 
+      # Completes this generator's scope (thecore_generators#22, ADR 0006): fetches
+      # thecore's own samples/ATOM_CLAUDE.md and writes it as the new ATOM's
+      # CLAUDE.md, via the shared Thecore::Generators::SampleFetcher - the same
+      # THECORE_SAMPLES_SOURCE mechanism the App template's own (separate, still
+      # independent - see sample_fetcher.rb's own header for why) asset fetch
+      # already established.
+      #
+      # A fetch failure here raises SystemExit (via Kernel#abort), not Thor::Error
+      # like every guard method above - a deliberate inconsistency, not an
+      # oversight: it matches the App template's own established convention for
+      # this exact class of failure (an external, this-run-only fetch, as opposed
+      # to a validation the generator could have caught before doing any real
+      # work), and the ticket's own acceptance criteria asks for "fail-fast abort,"
+      # not a Thor::Error. A failure here does leave the partially-generated
+      # vendor/submodules/<name> directory behind (rails plugin new/the Gemfile/
+      # gemspec edits already succeeded) - #ensure_atom_does_not_already_exist!
+      # then refuses a same-named retry until it's removed by hand; the abort
+      # message says so.
+      #
+      # NOTE: like the App template's own fetch of thecore/samples/CLAUDE.md
+      # before it, this 404s against the real default GitHub URL until thecore's
+      # `master` actually carries the commit that added samples/ATOM_CLAUDE.md
+      # (thecore#18) - as of this gem's 3.11.0 release that commit exists only in
+      # a local `thecore` checkout, not yet pushed. Same operational sequencing
+      # note as the App template's own CLAUDE.md section: push `thecore` before
+      # relying on the default in production.
+      def fetch_claude_md
+        Thecore::Generators::SampleFetcher.fetch_thecore_sample(
+          self, "ATOM_CLAUDE.md", File.join(atom_root, "CLAUDE.md"), label: "the thecore:atom generator"
+        )
+      end
+
       # `-fG` (`rails plugin new`'s own force+skip-git flags) means no git repo and no
       # .gitignore exist yet at this point - a deliberate gap in createATOM.js this
       # ticket narrows, not fully closes (ADR 0006): a local, safe `git init` +
@@ -442,6 +475,7 @@ module Thecore
           say_status :error, "The #{key} is not valid. Please try again.", :red
         end
       end
+
     end
   end
 end

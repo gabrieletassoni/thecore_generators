@@ -421,6 +421,33 @@ patterns the App template's own `samples/` assets now carry) — a candidate for
 if the growing dummy-app tree ever makes an unignored initial commit less clean than verified
 here.
 
+**`fetch_claude_md`** (thecore_generators#22) — completes this generator's scope by fetching
+`thecore`'s own `samples/ATOM_CLAUDE.md` and writing it as the new ATOM's `CLAUDE.md`, via
+`Thecore::Generators::SampleFetcher.fetch_thecore_sample` (`lib/generators/thecore/sample_fetcher.rb`)
+— a shared module (same env var, `THECORE_SAMPLES_SOURCE`; same http(s)-vs-local-directory
+branching via `get`/`File.read`, now trailing-slash-tolerant on the http(s) branch; same
+`nil?`/`empty?` blank-safety, not bare `||`; same `force: true`; same fail-fast `abort` naming
+the file/source/underlying error, plus a hint to remove a partially-generated ATOM directory
+before retrying).
+
+This module is **not** shared with `lib/templates/app_template.rb`'s own, separately-maintained
+`fetch_thecore_sample` for the App template, even though the two were byte-for-byte identical
+before this extraction. An earlier version of this section claimed the reason was
+instance_eval/mixin incompatibility — review correctly identified that as wrong: `get`/
+`create_file` are public Thor::Actions instance methods, so a module function taking the caller
+as an explicit argument works identically from a class instance method and from an
+`instance_eval`'d script, exactly like `TtyDetection.real_tty?` already proves. The real reason
+is deployment, not syntax, and it's specific to the App template: its primary real-world
+invocation is `rails new myapp -m https://raw.githubusercontent.com/.../app_template.rb`, and
+Thor's `apply`/`instance_eval` fetches and evaluates *only that one URL's content* — there is no
+mechanism for it to also pull in a sibling file from this gem's own repo, and at the moment that
+command runs there is no app yet, so nothing has installed `thecore_generators` as a dependency
+either. A `require "generators/thecore/sample_fetcher"` inside the template would only work by
+accident (a global gem install happening to already be on the load path), not by design — so
+the App template keeps its own independent copy. `AtomGenerator`, by contrast, is a normal class
+file loaded the ordinary way inside an already-bundled gem, so it has no such constraint and now
+calls the shared module directly, `require`d like any other file here.
+
 **`git_init_and_commit`** — `-fG` (`rails plugin new`'s own force+skip-git flags) means no git
 repo exists yet at this point. This generator narrows that gap, per ADR 0006, without fully
 closing it: a local `git init -b master` + one commit (authored as the `--author`/`--email` the
@@ -477,9 +504,13 @@ plumbing, since `Thor::Actions#run`'s `system` call inherits the parent process'
 default. `setup` also writes a minimal stub `Gemfile` at `destination_root` (a real host app
 always has one; `Rails::Generators::Actions#gem`'s own `append_file_with_newline` call in
 `add_gem_to_host_gemfile` errors on a missing file otherwise) and pre-creates `vendor/submodules`
-(the generator's own first guard check requires it). Despite spawning a real `rails plugin new`
-subprocess, the whole four-test file runs in under a second — no `bundle install`/test-run ever
-happens against the freshly generated dummy app, only file generation.
+(the generator's own first guard check requires it). Only 3 of the file's 8 tests actually reach
+`create_rails_engine`'s real `rails plugin new` subprocess (the guard-check tests fail before
+ever reaching it; the `CLAUDE.md`-fetch-failure test builds an `AtomGenerator` instance directly
+and calls `fetch_claude_md` on it, the same "construct the generator, call the one method under
+test" pattern `AssociationWiring`'s own test file already established, skipping the subprocess
+entirely) — no `bundle install`/test-run ever happens against the freshly generated dummy app,
+only file generation, so the whole file still runs in a couple of seconds.
 
 ### `Thecore::Generators::CollectionActionGenerator` (`lib/generators/thecore/collection_action/collection_action_generator.rb`, thecore_generators#21, ADR 0006)
 
@@ -865,11 +896,19 @@ Key test files:
   locale-file cases specific to `CompanionFiles`.
 - `test/generators/thecore/atom_generator_test.rb` — `thecore:atom`'s own guard checks (missing
   `vendor/submodules`, an invalid/shell-unsafe name, an already-existing `vendor/submodules/
-  <name>`, missing `--non-interactive` flags), one full end-to-end generation each for the
-  default (API/Admin deps included) and `--skip-api-admin-deps` paths, and a Gemfile-collision
-  case (an existing `gem "tcp_debugger", ...` line in the host Gemfile is never duplicated) —
-  see `AtomGenerator`'s own CLAUDE.md section above for why its `destination` isn't under this
-  gem's own `tmp/` the way every other generator test's is.
+  <name>`, missing `--non-interactive` flags — none of these reach the real `rails plugin new`
+  subprocess), one full end-to-end generation each for the default (API/Admin deps included) and
+  `--skip-api-admin-deps` paths (the only two tests that do reach it — the former's own
+  assertions include the `CLAUDE.md` fetch, byte-for-byte against the fixture, same fixture
+  directory `test/templates/app_template_test.rb` already uses via `THECORE_SAMPLES_SOURCE`), a
+  Gemfile-collision case (an existing `gem "tcp_debugger", ...` line in the host Gemfile is never
+  duplicated — also a full run), and the `CLAUDE.md` fetch's own failure/abort message, tested by
+  building an `AtomGenerator` instance directly and calling `fetch_claude_md` on it rather than
+  `run_generator`ing the whole pipeline — the same "construct the generator, call the one method
+  under test" pattern `AssociationWiring`'s own test file already established, skipping the
+  subprocess for a case that doesn't need it. See `AtomGenerator`'s own CLAUDE.md section above
+  for why its `destination` isn't under this gem's own `tmp/` the way every other generator
+  test's is.
 - `test/support/check_practices_fixtures.rb` — shared fixture-writing/cleanup/task-invocation
   helpers (`write_fixture`, `register_cleanup_for`, `snapshot_existing_file!`,
   `register_action_fix_cleanup!`, `invoke_task`/`invoke_with_argv`) for both
@@ -918,7 +957,7 @@ Key test files:
 
 ## Releasing
 
-Version lives in `lib/thecore_generators/version.rb` (currently `3.10.0`). Pushing a commit that
+Version lives in `lib/thecore_generators/version.rb` (currently `3.11.0`). Pushing a commit that
 bumps it triggers `.github/workflows/gempush.yml`, which tags the commit with that version and
 publishes to RubyGems (skipped if the tag already exists) — same pattern as the other gems in
 this ecosystem.

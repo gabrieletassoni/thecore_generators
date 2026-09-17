@@ -1,3 +1,21 @@
+## 3.11.0
+
+- Extend `thecore:atom` (thecore_generators#22, per ADR 0006 in the thecore repo) to fetch
+  `thecore`'s own `samples/ATOM_CLAUDE.md` and write it as the new ATOM's `CLAUDE.md`, via a new
+  shared `Thecore::Generators::SampleFetcher` module using the same `THECORE_SAMPLES_SOURCE`
+  env-var override mechanism the App template's own asset fetch already established
+  (http(s)-vs-local-path branching, forced overwrite, fail-fast `abort` naming the
+  file/source/underlying error). This completes `thecore:atom`'s scope as scoped by
+  thecore_generators#19/#20/#22, matching the shape the App template already set for freshly
+  generated apps.
+- Like the App template's own fetch of `thecore/samples/CLAUDE.md` before it, this 404s against
+  the real default GitHub URL until `thecore`'s `master` actually carries the commit that added
+  `samples/ATOM_CLAUDE.md` (thecore#18) — as of this release that commit exists only in a local
+  `thecore` checkout, not yet pushed to `origin/master`. Same operational sequencing note as the
+  App template's own: push `thecore` before relying on the default in production, or point
+  `THECORE_SAMPLES_SOURCE` at a local checkout in the meantime.
+- See [thecore_generators#22](https://github.com/gabrieletassoni/thecore_generators/issues/22).
+
 ## 3.10.0
 
 - Add `rails generate thecore:atom NAME` (`Thecore::Generators::AtomGenerator`,
