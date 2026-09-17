@@ -20,6 +20,11 @@ require "tmpdir"
 class AppTemplateTest < Minitest::Test
   TEMPLATE_PATH = File.expand_path("../../lib/templates/app_template.rb", __dir__)
   GEM_ROOT = File.expand_path("../..", __dir__)
+  # thecore_generators#18's asset-source override point, pinned at a fixture checked
+  # into this gem's own test folder rather than thecore's real samples/ (which this
+  # gem doesn't own and shouldn't duplicate a live copy of) — keeps the whole suite
+  # offline and deterministic, no live HTTP calls to raw.githubusercontent.com.
+  SAMPLES_FIXTURE_DIR = File.expand_path("../fixtures/thecore_samples", __dir__)
 
   def test_core_scaffolding_matches_thecore_generators_17_acceptance_criteria
     Dir.mktmpdir do |dir|
@@ -69,6 +74,49 @@ class AppTemplateTest < Minitest::Test
             .reject { |p| p.end_with?("/.", "/..") },
           "vendor/#{placeholder_dir}/ should contain nothing but the placeholder — no pre-wired content"
       end
+
+      # thecore_generators#18: devcontainer/CI/CLAUDE.md assets fetched from thecore's
+      # samples (the fixture above, via THECORE_SAMPLES_SOURCE), overwriting whatever
+      # the bootstrap "Setup Devcontainer" step would have created. Asserting byte-exact
+      # equality against the fixture (not just "a file exists" / a content pattern)
+      # proves the fetch round-trip actually pulled from the intended source — a
+      # pattern-only check could pass even if the wrong file got fetched, as long as it
+      # coincidentally matched; equality can't.
+      %w[
+        devcontainer.json docker-compose.yml Dockerfile create-db-user.sql
+        link-host-home.sh check-plugins.sh
+      ].each do |file|
+        destination = File.join(app_path, ".devcontainer", file)
+        assert File.file?(destination), "expected .devcontainer/#{file} to be fetched from thecore's samples"
+        assert_equal File.read(File.join(SAMPLES_FIXTURE_DIR, "devcontainer", file)), File.read(destination),
+          "expected the fetched .devcontainer/#{file} to match the fixture byte-for-byte"
+      end
+      %w[link-host-home.sh check-plugins.sh].each do |script|
+        mode = File.stat(File.join(app_path, ".devcontainer", script)).mode
+        assert (mode & 0o111).positive?, "expected .devcontainer/#{script} to be executable"
+      end
+
+      # The fixture's devcontainer.json (unlike the real thecore/samples one, kept
+      # deliberately minimal — see SAMPLES_FIXTURE_DIR's comment) still carries the
+      # commented gh/glab mounts specifically, since that's the one piece of content
+      # this ticket's acceptance criteria calls out by name.
+      devcontainer_json = File.read(File.join(app_path, ".devcontainer", "devcontainer.json"))
+      %w[gh glab].each do |cli|
+        assert_match(/^\s*\/\/\s*"source=.*#{cli}/, devcontainer_json,
+          "expected the #{cli} CLI config mount to be present but commented out")
+      end
+
+      %w[.gitlab-ci.yml CLAUDE.md].each do |file|
+        destination = File.join(app_path, file)
+        assert File.file?(destination), "expected #{file} to be fetched from thecore's samples"
+        assert_equal File.read(File.join(SAMPLES_FIXTURE_DIR, file)), File.read(destination),
+          "expected the fetched #{file} to match the fixture byte-for-byte"
+      end
+
+      claude_md = File.read(File.join(app_path, "CLAUDE.md"))
+      assert_match(/mattpocock-skills/, claude_md, "expected the universal skill-plugin section")
+      assert_match(/ask-matt/, claude_md, "expected the universal required-skill-sequence section")
+      assert_match(/TODO/, claude_md, "expected project-specific sections left as TODO placeholders")
     end
   end
 
@@ -88,7 +136,12 @@ class AppTemplateTest < Minitest::Test
     # there, that walk-up would silently exec the *host app's* bin/rails instead of
     # generating a new app. `BUNDLE_GEMFILE` (rather than cwd) is what tells
     # Bundler which bundle's `rails` gem to resolve.
-    env = { "BUNDLE_GEMFILE" => File.join(GEM_ROOT, "Gemfile") }
+    env = {
+      "BUNDLE_GEMFILE" => File.join(GEM_ROOT, "Gemfile"),
+      # thecore_generators#18: points the template's asset-fetch step at the local
+      # fixture above instead of the real raw GitHub URL it defaults to.
+      "THECORE_SAMPLES_SOURCE" => SAMPLES_FIXTURE_DIR
+    }
 
     Open3.capture3(
       env,

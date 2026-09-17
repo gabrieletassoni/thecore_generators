@@ -1,0 +1,6 @@
+# Minimal fixture standing in for thecore's real samples/devcontainer/docker-compose.yml.
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile

@@ -1,0 +1,31 @@
+# Minimal fixture standing in for thecore's real samples/.gitlab-ci.yml -- exercises the
+# App template's fetch mechanism offline (thecore_generators#18); not a copy of the real
+# file, which this gem doesn't own and shouldn't duplicate.
+image: gabrieletassoni/vscode-devcontainers-thecore:3
+
+stages:
+  - build
+  - test
+  - lint
+  - delivery
+  - deploy
+
+build:
+  stage: build
+  script:
+    - sudo -E /usr/bin/app-compile.sh
+
+test:
+  stage: test
+  script:
+    - bundle exec rails test
+
+lint:
+  stage: lint
+  script:
+    - bundle exec rubocop
+
+to-dev:
+  stage: delivery
+  script:
+    - "/usr/bin/docker-deploy.sh"

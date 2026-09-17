@@ -1,0 +1,14 @@
+// Minimal fixture standing in for thecore's real samples/devcontainer/devcontainer.json
+// -- exercises the App template's fetch mechanism offline (thecore_generators#18); not
+// a copy of the real file, which this gem doesn't own and shouldn't duplicate.
+{
+	"name": "Thecore App",
+	"dockerComposeFile": "docker-compose.yml",
+	"service": "app",
+	"mounts": [
+		// "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind",
+		// "source=${localEnv:HOME}/.config/glab-cli,target=/home/vscode/.config/glab-cli,type=bind",
+		"source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind"
+	],
+	"remoteUser": "vscode"
+}

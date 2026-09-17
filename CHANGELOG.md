@@ -1,3 +1,15 @@
+## 3.8.0
+
+- Extend the App application template (thecore_generators#18, ADR 0005 in the thecore
+  repo) to fetch and write devcontainer/CI/CLAUDE.md assets from `thecore`'s own
+  `samples/` directory — `.devcontainer/*` (overwriting whatever the "Setup
+  Devcontainer" bootstrap step created), `.gitlab-ci.yml`, and `CLAUDE.md`. The base
+  location is one overridable point (`ENV["THECORE_SAMPLES_SOURCE"]`), defaulting to
+  the real raw GitHub URL for `thecore`'s `samples/` on `master` (its actual default
+  branch, not `release/3` as originally written in the ticket). This is what completes
+  the App template: a freshly generated app now matches the best-practice reference
+  end-to-end, not just a working Rails/Gemfile base.
+
 ## 3.7.0
 
 - Add the App application template core (`lib/templates/app_template.rb`,

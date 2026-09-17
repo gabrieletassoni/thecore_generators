@@ -22,10 +22,11 @@ transparently apply thecore's scaffolding conventions — no new command vocabul
 (check_practices + Root/Member Action generators) is complete** as of this release: `rails
 generate thecore:root_action`, `rails generate thecore:member_action`, and `rails
 thecore:check_practices` (Scaffold Files + Models + Actions, `--fix` included) all ship.
-**Phase 3's App application template** (porting `createApp.js`) is landing in two tickets —
-the core (`lib/templates/app_template.rb`: Rails app + Gemfile stack + vendor placeholders,
-thecore_generators#17) ships in this release; devcontainer/CI/CLAUDE.md asset fetching from
-the thecore repo's own samples (thecore_generators#18) is a follow-up. See
+**Phase 3's App application template** (porting `createApp.js`) is complete as of this release —
+both the core (`lib/templates/app_template.rb`: Rails app + Gemfile stack + vendor placeholders,
+thecore_generators#17) and devcontainer/CI/CLAUDE.md asset fetching from the thecore repo's own
+samples (thecore_generators#18) have shipped. The `thecore:atom` generator and a Collection
+Action generator remain deferred to a future session (ADR 0005). See
 [ADR 0005](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0005-app-template-scoped-to-rails-new-m-assets-sourced-from-thecore-samples.md)
 in the thecore repo for the full design.
 
@@ -258,7 +259,7 @@ remain (so a violation this run can't fix, e.g. a `collection_action` companion,
 after `--fix`). The task exits non-zero whenever any violation remains, zero otherwise, so it's
 usable as a CI gate either with or without `--fix`.
 
-### Application Template (`rails new -m`) — core (thecore_generators#17)
+### Application Template (`rails new -m`) (thecore_generators#17/#18)
 
 A Ruby port of `thecore_code_extension`'s `createApp.js`, as a genuine Rails application
 template rather than a `thecore:*` generator — its entry point is `rails new -m`, not `rails
@@ -269,25 +270,35 @@ rails new myapp --database=postgresql --asset-pipeline=sprockets \
   -m https://raw.githubusercontent.com/gabrieletassoni/thecore_generators/release/3/lib/templates/app_template.rb
 ```
 
-This ticket covers the app-level scaffolding only — Gemfile and the two developer-convenience
-vendor directories. Devcontainer/CI/CLAUDE.md generation (fetched from the `thecore` repo's own
-`samples/`) is a separate, follow-up piece (thecore_generators#18); see
+Run inside a devcontainer already created by the "Setup Devcontainer" VS Code command — a
+bootstrap step this template doesn't invoke or modify itself (that command's own code is
+untouched), even though the template's own devcontainer-asset fetch below does overwrite the
+files that bootstrap step created, by design. See
 [ADR 0005](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0005-app-template-scoped-to-rails-new-m-assets-sourced-from-thecore-samples.md)
-for why the two are split and why the samples live in `thecore`, not here.
+for the full design and why the two stay separate).
 
 - **Core Gemfile stack, active** — `devise`, `cancancan`, `rails_admin`, `sassc-rails`,
-  `model_driven_api`, `thecore_ui_rails_admin`, `rails-erd` (`:development`). `thecore_generators`
-  itself is added too, `group: :development` — so the generated app can immediately use every
+  `model_driven_api` (`~> 3.9`), `thecore_ui_rails_admin` (`~> 3.8` — both meeting ADR 0001's
+  `DefaultModuleRegistry` floor), `rails-erd` (`:development`). `thecore_generators` itself is
+  added too, `group: :development` — so the generated app can immediately use every
   generator/task documented above without a manual Gemfile edit first.
 - **The rest of the generic Thecore ecosystem, commented out** — `thecore_auth_commons`,
   `thecore_settings`, `thecore_print_commons`, `thecore_background_jobs`, `thecore_ui_commons`,
   `thecore_tcp_debug`, `thecore_download_documents`, `thecore_dataentry_commons`,
   `thecore_connectors`, each with a one-line purpose comment — discoverable but off by default,
   the same "commented but documented" philosophy ADR 0005 applies to the devcontainer's `gh`/
-  `glab` CLI mounts (ticket #18).
+  `glab` CLI mounts below.
 - **`vendor/submodules/`/`vendor/external/`** — created empty (a `.keep` file each), not
   pre-wired with any submodule or gem. Per ADR 0005 these are developer-convenience clone
   locations, not template content.
+- **Devcontainer/CI/CLAUDE.md**, fetched from the `thecore` repo's own `samples/` (single source
+  of truth, not duplicated here) and written unconditionally, overwriting whatever the bootstrap
+  "Setup Devcontainer" step created: `.devcontainer/*` (base image, plugin mounts, `gh`/`glab`
+  CLI config mounts commented out by default), `.gitlab-ci.yml` (build/test/lint/deploy, no
+  customer-specific paths), and `CLAUDE.md` (universal sections only, project-specific sections
+  left as TODO placeholders). The fetch location is one overridable point,
+  `ENV["THECORE_SAMPLES_SOURCE"]`, defaulting to the raw GitHub URL for `thecore`'s `samples/`
+  on `master` (`thecore`'s actual default branch).
 - **The standard installer chain** (`devise:install`, `rails_admin:install`, `active_storage:
   install`, `action_text:install`, `action_mailbox:install`, `cancan:ability`, `erd:install`,
   each preceded by the necessary `bundle install`) is genuinely optional, gated behind an

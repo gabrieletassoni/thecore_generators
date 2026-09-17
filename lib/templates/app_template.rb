@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# Thecore 3 Application Template — thecore_generators#17 (core), porting createApp.js's
-# Gemfile/vendor-directory behavior. Devcontainer/CI/CLAUDE.md assets are added by the
-# follow-up ticket (thecore_generators#18); see ADR 0005 in the thecore repo for the
-# full design rationale behind both.
+# Thecore 3 Application Template — porting createApp.js's Gemfile/vendor-directory
+# behavior (thecore_generators#17) plus devcontainer/CI/CLAUDE.md assets fetched from
+# thecore's own samples/ (thecore_generators#18). See ADR 0005 in the thecore repo for
+# the full design rationale behind both.
 #
 # Invoke via:
 #
@@ -78,6 +78,82 @@ create_file "vendor/external/.keep", <<~TEXT
   sibling tooling repos you want open alongside this app). Not consumed by
   anything automatically.
 TEXT
+
+# --- Devcontainer / CI / CLAUDE.md assets, from thecore's own samples -------
+# Single source of truth (ADR 0005) — not duplicated inside this gem. The base
+# location is resolved fresh inside `fetch_thecore_sample` on every call, through
+# one overridable point: `ENV["THECORE_SAMPLES_SOURCE"]`, defaulting to the real
+# raw GitHub URL for thecore's `samples/` directory on `master` (thecore's own
+# default branch — double-checked directly against that repo, not assumed from
+# this gem's own `release/3` naming convention, which doesn't apply there). An
+# unset *or blank* env var falls back to the default (an explicit emptiness
+# check, not `||` alone — `ENV["X"] || default` would treat `THECORE_SAMPLES_SOURCE=""`,
+# a realistic shape for an optional env var in a compose file with no value set,
+# as a real override and try to read a same-named file relative to whatever the
+# current directory happens to be, instead of falling back). An http(s) value is
+# fetched over the network via `get`; anything else is treated as a local
+# directory and read directly — this gem's own offline test points it at a
+# fixture instead.
+#
+# NOTE: this default URL only serves real content once `thecore`'s `master`
+# carries the commits that added `samples/CLAUDE.md`/`samples/.gitlab-ci.yml`
+# and brought `samples/devcontainer/` up to date (thecore#14/#15) — as of this
+# gem's own 3.8.0 release those commits exist only in a local checkout, not
+# pushed to `origin/master` yet. Until they're pushed, the default URL 404s for
+# `.gitlab-ci.yml`/`CLAUDE.md`/the two devcontainer scripts and serves stale
+# content for `devcontainer.json`/`docker-compose.yml`. This is an operational
+# sequencing issue (push `thecore` before relying on the default in production),
+# not a defect in this code — but it means `THECORE_SAMPLES_SOURCE` pointed at a
+# local clone of `thecore` is the only way to exercise the real default content
+# today.
+#
+# Every write below is unconditional (`force: true`, no interactive prompt).
+# Of the six `.devcontainer/*` files, four (`devcontainer.json`,
+# `docker-compose.yml`, `Dockerfile`, `create-db-user.sql`) are expected to
+# already exist, written by the separate, prior "Setup Devcontainer" bootstrap
+# step this template runs inside of (verified directly against that command's
+# source, `thecore_code_extension/commands/setupDevContainer.js`) — replacing
+# them is the whole point, not a conflict to ask about. The other two
+# (`link-host-home.sh`/`check-plugins.sh`) are *not* written by that step at
+# all — genuinely new files here, not overwrites — but `force: true` is harmless
+# for a new file and keeps every write in this block uniform.
+# `.gitlab-ci.yml`/`CLAUDE.md` don't exist yet in the documented flow either,
+# but stay unconditional too so re-running this template later
+# (`bin/rails app:template`) is a clean overwrite, not a prompt.
+#
+# A fetch failure (today: the 404s above; going forward: any network blip, or
+# `thecore` reorganizing `samples/`) aborts the whole template with a clear,
+# specific message instead of continuing into a silently half-scaffolded app
+# (some `.devcontainer/*` files present, others not, no clear signal pointing
+# back to the real cause) -- the same fail-fast philosophy thecore_generators#17
+# already applies to `bundle_command`/`rails_command` failures in the installer
+# chain below.
+def fetch_thecore_sample(relative_path, destination)
+  source = ENV["THECORE_SAMPLES_SOURCE"]
+  source = "https://raw.githubusercontent.com/gabrieletassoni/thecore/master/samples" if source.nil? || source.empty?
+
+  if source.start_with?("http://", "https://")
+    get("#{source}/#{relative_path}", destination, force: true)
+  else
+    create_file(destination, File.read(File.join(source, relative_path)), force: true)
+  end
+rescue StandardError => e
+  abort("Failed to fetch #{relative_path} from #{source} (#{e.class}: #{e.message}) " \
+    "-- aborting the app template. Set THECORE_SAMPLES_SOURCE to override the source.")
+end
+
+%w[devcontainer.json docker-compose.yml Dockerfile create-db-user.sql link-host-home.sh check-plugins.sh].each do |file|
+  fetch_thecore_sample("devcontainer/#{file}", ".devcontainer/#{file}")
+end
+# `get`/`create_file` only write content, never permissions — the executable bit
+# has to be restored explicitly for the two scripts (`thecore/samples/devcontainer/`
+# stores them executable, but that's lost the moment their bytes cross an HTTP
+# fetch or a plain `File.read`).
+chmod ".devcontainer/link-host-home.sh", 0o755
+chmod ".devcontainer/check-plugins.sh", 0o755
+
+fetch_thecore_sample(".gitlab-ci.yml", ".gitlab-ci.yml")
+fetch_thecore_sample("CLAUDE.md", "CLAUDE.md")
 
 # --- Standard installer chain ------------------------------------------------
 # Needs the gems added above actually bundled and installable, i.e. real network

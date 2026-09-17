@@ -448,7 +448,7 @@ during thecore_generators#14's own implementation — an incompletely-cleaned `-
 effect (an unaccounted-for companion directory, or a rewritten `config/locales/en.yml`) leaks
 into the next test's fixture state and produces flaky, order-dependent failures.
 
-### The App Application Template (`lib/templates/app_template.rb`, ADR 0005 Phase 3 — core, thecore_generators#17)
+### The App Application Template (`lib/templates/app_template.rb`, ADR 0005 Phase 3, thecore_generators#17/#18)
 
 A Ruby port of `thecore_code_extension`'s `createApp.js` (thecore_generators#16's spec) — but
 a genuine **Rails application template**, not a `Thor::Group` generator like everything above.
@@ -550,6 +550,75 @@ directory itself (which has no `bin/rails` anywhere in its ancestry) and set `BU
 explicitly to this gem's own `Gemfile` — `BUNDLE_GEMFILE`, not `cwd`-based Gemfile discovery, is
 what tells Bundler which bundle's `rails` to resolve.
 
+**Devcontainer/CI/CLAUDE.md assets are fetched from `thecore`'s own `samples/`, not shipped here**
+(thecore_generators#18): `.devcontainer/*` (`devcontainer.json`, `docker-compose.yml`,
+`Dockerfile`, `create-db-user.sql`, `link-host-home.sh`, `check-plugins.sh`), `.gitlab-ci.yml`,
+and `CLAUDE.md` are all fetched via a `fetch_thecore_sample(relative_path, destination)` helper
+defined inline in the template (a `def` inside a `rails new -m` template's `instance_eval`d
+content becomes a singleton method on the `AppGenerator` instance being evaluated against — safe
+and ordinary for a Rails application template, not a global `Object` pollution risk; verified
+against `Thor::Actions#apply`'s own `instance_eval(contents, path)`). The base location is
+resolved fresh on every call from `ENV["THECORE_SAMPLES_SOURCE"]`, defaulting to
+`https://raw.githubusercontent.com/gabrieletassoni/thecore/master/samples` — **`master`, not
+`release/3`**: `thecore_generators#18`'s own ticket text said `release/3`, copying this gem's own
+branch convention, but `thecore` only has a `master` branch (double-checked directly against that
+repo before implementing, rather than trusting the ticket literally). An `http(s)` value is
+fetched over the network via Thor's `get`; anything else is treated as a local directory and read
+directly with `File.read` — `get`'s own "local" branch resolves through `source_paths`
+(`find_in_source_paths`), which this template deliberately doesn't touch just for this, so the
+non-HTTP case is handled by hand instead of trying to bend `get` to do it.
+
+**`ENV["THECORE_SAMPLES_SOURCE"]` falls back to the default on blank, not just unset** —
+`source.nil? || source.empty?`, not a bare `||` — because `ENV["X"] || default` treats
+`THECORE_SAMPLES_SOURCE=""` (a realistic shape for an optional env var left unset in a compose
+file) as a real override, silently reading a same-named file relative to whatever the current
+directory happens to be instead of falling back.
+
+**The default URL only serves real content once `thecore`'s `master` carries the commits that
+added `samples/CLAUDE.md`/`samples/.gitlab-ci.yml` and brought `samples/devcontainer/` up to date
+(thecore#14/#15)** — as of this gem's 3.8.0 release those commits exist only in a local checkout,
+not pushed to `origin/master`. Verified live: the default URL currently 404s for `.gitlab-ci.yml`/
+`CLAUDE.md`/the two devcontainer scripts, and serves stale content for `devcontainer.json`/
+`docker-compose.yml`. This is an operational sequencing issue (push `thecore` before relying on
+the default in production), not a defect in this code — but it means `THECORE_SAMPLES_SOURCE`
+pointed at a local `thecore` clone is the only way to exercise the real default content today.
+
+Every fetch passes `force: true` — unconditional overwrite, no interactive Thor conflict prompt.
+Of the six `.devcontainer/*` files, four (`devcontainer.json`, `docker-compose.yml`, `Dockerfile`,
+`create-db-user.sql`) are *expected* to already exist, written by the separate, prior "Setup
+Devcontainer" VS Code command this template runs inside the bootstrap container of (verified
+directly against that command's own source, `setupDevContainer.js`, not assumed) — replacing them
+is the entire point of this ticket, not a conflict to ask about. The other two
+(`link-host-home.sh`/`check-plugins.sh`) are **not** written by that command at all — genuinely
+new files here, not overwrites — but `force: true` is harmless for a new file and keeps the whole
+block uniform; an earlier draft of this comment claimed all six pre-existed, which was wrong for
+these two (caught in review). `.gitlab-ci.yml`/`CLAUDE.md` don't exist yet in the documented flow
+either, but stay `force: true` too so a later re-application of this same template (`bin/rails
+app:template`) is a clean overwrite rather than a prompt neither a CI pipeline nor a non-interactive
+caller could answer.
+
+`get`/`create_file` only ever write file *content* — the executable bit `link-host-home.sh`/
+`check-plugins.sh` need is lost the moment their bytes cross an HTTP fetch or a plain `File.read`,
+so the template `chmod`s both explicitly (`0o755`) right after fetching them.
+
+**A fetch failure aborts with a clear message, not a raw stack trace** — `fetch_thecore_sample`
+rescues `StandardError` around the `get`/`create_file` call and `abort`s naming the file, the
+source, and the underlying error, mirroring the fail-fast philosophy thecore_generators#17 already
+applies to `bundle_command`/`rails_command` failures in the installer chain below, rather than
+letting a bare `OpenURI::HTTPError` propagate and leave the app half-scaffolded (some
+`.devcontainer/*` files present, others not) with no clear signal pointing back to the cause.
+
+**Testing** (`test/templates/app_template_test.rb`) extends the exact same test method
+thecore_generators#17 added, per this ticket's own acceptance criteria ("extended, not
+duplicated") — no second test file, no second `rails new` subprocess spawn. The asset-source
+override point is pointed at `test/fixtures/thecore_samples/` (checked into this gem's own test
+folder) via `THECORE_SAMPLES_SOURCE` in `spawn_rails_new`'s env hash, so the whole suite stays
+offline — these fixtures are deliberately **minimal, hand-written stand-ins**, not a live copy of
+`thecore`'s real `samples/` content: this gem doesn't own that content and a synced copy would be
+one more place for the two to drift apart, when the fixture's only job is proving the *fetch
+mechanism* works, not re-verifying `thecore`'s own sample content (that's `thecore`'s own
+responsibility, and it has no test suite by design — see its own CLAUDE.md).
+
 ## Key invariants and gotchas
 
 - **Never reimplement ActiveRecord's own generator logic.** Every override in this gem calls
@@ -644,7 +713,7 @@ Key test files:
 
 ## Releasing
 
-Version lives in `lib/thecore_generators/version.rb` (currently `3.7.0`). Pushing a commit that
+Version lives in `lib/thecore_generators/version.rb` (currently `3.8.0`). Pushing a commit that
 bumps it triggers `.github/workflows/gempush.yml`, which tags the commit with that version and
 publishes to RubyGems (skipped if the tag already exists) — same pattern as the other gems in
 this ecosystem.
