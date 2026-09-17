@@ -1,0 +1,13 @@
+<%%= stylesheet_link_tag 'rails_admin/actions/<%= file_name %>' %>
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="response <%= file_name %>-response" id="<%= file_name %>-response">
+    </div>
+    <div class="loader d-none" id="<%= file_name %>-loader">
+      <div class="double-bounce1"></div>
+      <div class="double-bounce2"></div>
+    </div>
+  </div>
+</div>
+<button class="btn btn-primary" id="<%= file_name %>-id" data-url="<%%= rails_admin.<%= file_name %>_path %>">Click me</button>
+<%%= javascript_include_tag "rails_admin/actions/<%= file_name %>" %>

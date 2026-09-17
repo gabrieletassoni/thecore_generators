@@ -5,6 +5,7 @@ require "generators/thecore/workspace_context"
 require "generators/thecore/action_companion"
 require "generators/thecore/root_action/root_action_generator"
 require "generators/thecore/member_action/member_action_generator"
+require "generators/thecore/collection_action/collection_action_generator"
 
 module Thecore
   # `rails thecore:check_practices` — a Ruby port of thecore_code_extension's
@@ -50,8 +51,9 @@ module Thecore
     # then re-scans and returns whatever violations remain, per ADR 0004:
     # "exits non-zero whenever violations remain unresolved after any --fix
     # pass" — this makes a fix that turns out incomplete (or a violation
-    # this ticket doesn't know how to fix, e.g. a collection_action
-    # companion) visible in the result rather than silently assumed fixed.
+    # this gem doesn't know how to fix at all, e.g. a broken action-file
+    # marker, never fixable for any kind) visible in the result rather than
+    # silently assumed fixed.
     def self.run(app_root:, atom_name: nil, fix: false)
       violations = Runner.new(app_root: app_root, atom_name: atom_name).run
       return violations unless fix
@@ -63,12 +65,15 @@ module Thecore
     # A Thor::Group instance whose only purpose is running
     # Thecore::Generators::CompanionFiles' generic (action-kind-agnostic)
     # after_initialize.rb/locale fixes against a specific destination_root
-    # and action name — used by Runner's Actions check for all three kinds,
-    # including collection_action, which has no generator of its own to
-    # delegate companion-file (view/JS/SCSS) rendering to. Deliberately not
-    # placed under lib/generators/ (and so never discovered as a
-    # `rails generate` namespace) — it is an internal implementation detail
-    # of check_practices' --fix, not a public command.
+    # and action name — used by Runner's Actions check for all three kinds.
+    # Companion-file (view/JS/SCSS) fixes do NOT go through this class for
+    # any kind — those delegate straight to the kind's own real generator
+    # (RootActionGenerator/MemberActionGenerator/CollectionActionGenerator,
+    # via ACTION_GENERATOR_CLASSES below) so the fix always uses that
+    # generator's own template. Deliberately not placed under
+    # lib/generators/ (and so never discovered as a `rails generate`
+    # namespace) — it is an internal implementation detail of
+    # check_practices' --fix, not a public command.
     class GenericFixTarget < Rails::Generators::NamedBase
       include Thecore::Generators::AtomAware
       include Thecore::Generators::CompanionFiles
@@ -85,14 +90,15 @@ module Thecore
       VIEW_MARKERS = ["stylesheet_link_tag", "javascript_include_tag"].freeze
       JS_MARKERS = ["document.addEventListener('turbo:load'"].freeze
       SCSS_MARKERS = ["@keyframes sk-bounce"].freeze
-      # Only root_action/member_action have a generator whose own template
-      # rendering a companion-file fix can delegate to; collection_action
-      # has none (ADR 0004: "no generator to have gotten it right" - a
-      # tracked, deliberate gap), so its missing-companion violations are
-      # never fixable.
+      # All three kinds now have a generator whose own template rendering a
+      # companion-file fix can delegate to (thecore_generators#21, per ADR
+      # 0006 in the thecore repo) - collection_action's missing-companion
+      # violations were never fixable before this (ADR 0004 tracked it as a
+      # deliberate, temporary gap: "no generator to have gotten it right").
       ACTION_GENERATOR_CLASSES = {
         "root_action" => Thecore::Generators::RootActionGenerator,
         "member_action" => Thecore::Generators::MemberActionGenerator,
+        "collection_action" => Thecore::Generators::CollectionActionGenerator,
       }.freeze
 
       def initialize(app_root:, atom_name: nil)
@@ -235,7 +241,7 @@ module Thecore
       end
 
       # Renders only the one missing companion file, via the actual
-      # Root/Member Action generator's own template - never the bundled
+      # Root/Member/Collection Action generator's own template - never the bundled
       # "render all three companions" method, which would risk a
       # non-interactive file-collision hang/prompt on a hand-customized
       # sibling file that already exists with different content. A file

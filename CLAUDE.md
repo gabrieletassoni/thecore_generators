@@ -257,7 +257,8 @@ after_initialize.rb/assets.rb ensure-and-append logic and the locale-entry merge
 
 ### `Thecore::Generators::ActionCompanion` (`lib/generators/thecore/action_companion.rb`)
 
-Shared skeleton for `RootActionGenerator` and `MemberActionGenerator` (below), holding
+Shared skeleton for `RootActionGenerator`, `MemberActionGenerator`, and
+`CollectionActionGenerator` (below), holding
 everything about them that is not the action file's own RailsAdmin action type/template
 content: name validation (`/\A[a-z_][a-z0-9_]*\z/` — stricter than `addRootAction.js`'s/
 `addMemberAction.js`'s own `/^[a-z0-9_]+$/`, since a leading digit would render as an invalid
@@ -274,7 +275,8 @@ the generator's own `atom_dir`/`file_name`, and `Thecore::CheckPractices`' Actio
 from whichever action file it's auditing. The two used to duplicate this string format
 independently (one copy per module) until thecore_generators#14's own review caught it — a
 single source of truth means the audit's expectation of what a require line looks like can
-never drift out of sync with what `RootActionGenerator`/`MemberActionGenerator` actually write.
+never drift out of sync with what `RootActionGenerator`/`MemberActionGenerator`/
+`CollectionActionGenerator` actually write.
 
 **Why the actual Thor task methods (`create_action_file`, `create_view_js_scss_companions`,
 etc.) still live on each generator class directly, not in this module**: `Thor::Group` (which
@@ -329,6 +331,42 @@ needs a bare (no `=`) escaped ERB tag — `<%% end %>`, closing the escaped `<%%
 do |f| %>` block — proving the `<%%`-escaping convention (see Root Action above) isn't limited
 to output (`<%%=`) tags.
 
+### `Thecore::Generators::CollectionActionGenerator` (`lib/generators/thecore/collection_action/collection_action_generator.rb`, thecore_generators#21, ADR 0006)
+
+`rails generate thecore:collection_action NAME` — the third sibling to `RootActionGenerator`/
+`MemberActionGenerator`, structurally identical (same three `include`s, `action_kind
+"collection_action"`, same thin task methods verbatim) — needing **zero** changes to
+`AtomAware`, `CompanionFiles`, or `ActionCompanion`; `action_kind "collection_action"` alone is
+enough for placement (`lib/collection_actions/`/`config/collection_actions/`), pluralization,
+and name-validation wording to fall out correctly, the same way the other two kinds already do.
+
+Unlike Root/Member Action, there is **no** prior `thecore_code_extension` JS command this
+ports — `addCollectionAction.js` never existed; `checkPractices.js`/this gem's own Actions
+check have audited `collection_actions` since the Actions check shipped
+(thecore_generators#14), but nothing ever generated them until now. Its own
+`templates/action.rb.tt` therefore deliberately mirrors `RootActionGenerator`'s simplicity
+(`add_action "<name>", :base, :collection do ... end`, a minimal GET/JSON example with an
+`ActionCable.server.broadcast`) rather than the real, more complex, hand-written
+`save_filters.rb`/`load_filters.rb` pattern already living in `thecore_ui_rails_admin` (see
+that gem's own `lib/collection_actions/`) — a generator's starter template exists to be
+customized from a simple base, not to demonstrate every RailsAdmin `:collection` feature (ADR
+0006's own rationale). Notably, unlike Root's template, it does **not** call `member false`/
+`collection false` — RailsAdmin's real-world usage (`save_filters.rb`/`load_filters.rb`) never
+sets those booleans for a `:collection`-type action either; the third positional `:collection`
+argument to `add_action` already communicates the action's scope.
+
+`templates/action.html.erb.tt`/`action.js.tt`/`action.scss.tt` are otherwise byte-for-byte
+copies of Root Action's own — these three companion templates were never actually
+Root-specific content (they only ever referenced the generic `file_name`/
+`action_name_camel_case` ERB locals every kind shares), so there was nothing to adapt beyond
+copying them into this generator's own `templates/` directory (`render_view_js_scss_companions!`
+templates from the *including* generator's own `source_paths`, so each kind needs its own copy
+regardless of whether the content differs).
+
+`check_practices`'s `ACTION_GENERATOR_CLASSES` now includes this class (see below) — a missing
+Collection Action companion view/JS/SCSS is `fixable: true` the same way Root/Member's already
+were, closing the gap ADR 0004 originally tracked as deliberate.
+
 ### `Thecore::CheckPractices` (`lib/thecore_generators/check_practices.rb`, `lib/tasks/thecore_generators_tasks.rake`, ADR 0004 Phase 2)
 
 `rails thecore:check_practices` — a Ruby port of `thecore_code_extension`'s
@@ -367,16 +405,20 @@ raises `NameError: uninitialized constant Rails::Generators::Actions` the moment
   for all three (`ACTION_KINDS`): the action file's own markers
   (`RailsAdmin::Config::Actions.add_action`, `http_methods`), each companion (view/JS/SCSS) for
   existence + its own markers, the `after_initialize.rb` require line, and a locale entry per
-  existing `*.yml`. `collection_action` has no entry in `ACTION_GENERATOR_CLASSES` (no
-  generator exists for it — ADR 0004 tracks this as a deliberate gap), so its missing-companion
-  violations always carry `fixable: false`; the other two checks (require line, locale entry)
-  work identically for all three kinds since they don't need kind-specific template content.
+  existing `*.yml`. All three kinds now have an entry in `ACTION_GENERATOR_CLASSES`
+  (`RootActionGenerator`/`MemberActionGenerator`/`CollectionActionGenerator`,
+  thecore_generators#21 — ADR 0004 originally tracked `collection_action`'s always-`fixable:
+  false` companions as a deliberate, temporary gap, closed by ADR 0006 once the third generator
+  shipped), so a missing companion is fixable for all three; the other two checks (require
+  line, locale entry) already worked identically for all three kinds, since they never needed
+  kind-specific template content.
 - **`--fix`** (`Thecore::CheckPractices.run(..., fix: true)`) applies every violation whose
   `fixable` is true by calling its `Violation#fix` Proc, then **re-scans and returns whatever
   is left** — mirroring ADR 0004's "exits non-zero whenever violations remain unresolved after
   any `--fix` pass" wording literally, rather than trusting the fix to have succeeded. A
   companion-file fix calls `generator.send(:template, template_name, rel_path)` directly on a
-  freshly-built `RootActionGenerator`/`MemberActionGenerator` instance — deliberately **not**
+  freshly-built `RootActionGenerator`/`MemberActionGenerator`/`CollectionActionGenerator`
+  instance — deliberately **not**
   the bundled `create_view_js_scss_companions` task method, which would try to (re)write all
   three companions together and could hit a non-interactive file-collision hang/prompt if a
   *sibling* companion already exists with different (hand-customized) content, even though only
@@ -401,11 +443,11 @@ raises `NameError: uninitialized constant Rails::Generators::Actions` the moment
   `Thecore::CheckPractices::GenericFixTarget` (a bare `Rails::Generators::NamedBase` with
   `AtomAware`+`CompanionFiles`, not discovered as a `rails generate` namespace since it isn't
   under `lib/generators/`) instead, since those two are kind-agnostic and don't need a
-  Root/Member-specific template — the require-line's own text format is `ActionCompanion.
+  kind-specific template — the require-line's own text format is `ActionCompanion.
   require_line_for(kind:, in_atom:, name:)`, a plain module method also used by
   `ActionCompanion#require_line` (the real generators' own step), so the check's expectation of
-  what a require line looks like can never drift out of sync with what a real Root/Member
-  Action generator actually writes.
+  what a require line looks like can never drift out of sync with what a real Root/Member/
+  Collection Action generator actually writes.
 - **`Thecore::CheckPractices::Violation`** — a `Struct` (`file`, `line`, `message`,
   `severity`, `fixable`, `code`, `fix`); `#to_h` matches the ticket's JSON schema exactly, in
   that key order, and deliberately excludes `fix` (a zero-arg Proc or nil) — it exists purely
@@ -667,9 +709,10 @@ Key test files:
 - `test/generators/thecore/model_generator_test.rb` / `migration_generator_test.rb` — placement,
   ATOM redirection, `--atom=NAME` override.
 - `test/generators/thecore/root_action_generator_test.rb` /
-  `member_action_generator_test.rb` — same placement/ATOM/`--atom=NAME` pattern for
-  `thecore:root_action`/`thecore:member_action`, plus name validation and the
-  idempotent-rerun/broadened locale-file cases specific to `CompanionFiles`.
+  `member_action_generator_test.rb` / `collection_action_generator_test.rb` — same
+  placement/ATOM/`--atom=NAME` pattern for `thecore:root_action`/`thecore:member_action`/
+  `thecore:collection_action`, plus name validation and the idempotent-rerun/broadened
+  locale-file cases specific to `CompanionFiles`.
 - `test/support/check_practices_fixtures.rb` — shared fixture-writing/cleanup/task-invocation
   helpers (`write_fixture`, `register_cleanup_for`, `snapshot_existing_file!`,
   `register_action_fix_cleanup!`, `invoke_task`/`invoke_with_argv`) for both
@@ -683,11 +726,16 @@ Key test files:
   exit-code contract.
 - `test/tasks/check_practices_actions_test.rb` — same in-process pattern, covering the Actions
   check + `--fix`: action-file markers (never fixable), missing companion view/JS/SCSS fixed
-  via the real Root/Member generator's own template (proving each produces its own distinct
-  content, not a shared one), an existing companion with a missing marker left untouched by
-  `--fix`, the require-line and locale-entry fixes (generic across all three kinds),
-  `collection_action`'s companions never being fixable, `--atom=NAME` scoping a fix to inside
-  that ATOM, and two regression tests added during thecore_generators#14's own review: a
+  via the real Root/Member/Collection generator's own template. Root vs. Member is proven by
+  distinct rendered *content* (`fetch(url` vs. XHR); Collection's own companions are
+  deliberately byte-identical to Root's by design (see `CollectionActionGenerator`'s own
+  section above — content can't distinguish them), so that fix is instead proven by asserting
+  `ACTION_GENERATOR_CLASSES["collection_action"]` resolves to `CollectionActionGenerator`
+  directly (`collection_action`'s companions became fixable at all in thecore_generators#21,
+  closing the gap this test file covered as "never fixable" before that), an existing companion
+  with a missing marker left untouched by `--fix`, the require-line and locale-entry fixes
+  (generic across all three kinds), `--atom=NAME` scoping a fix to inside that ATOM, and two
+  regression tests added during thecore_generators#14's own review: a
   host-app fix staying in the host app even when the process's own `Dir.pwd` is `Dir.chdir`'d
   into an unrelated fixture ATOM first, and a companion shared by two action kinds with the
   same action name being fixed once without tripping Thor's file-collision prompt.
@@ -713,7 +761,7 @@ Key test files:
 
 ## Releasing
 
-Version lives in `lib/thecore_generators/version.rb` (currently `3.8.0`). Pushing a commit that
+Version lives in `lib/thecore_generators/version.rb` (currently `3.9.0`). Pushing a commit that
 bumps it triggers `.github/workflows/gempush.yml`, which tags the commit with that version and
 publishes to RubyGems (skipped if the tag already exists) — same pattern as the other gems in
 this ecosystem.

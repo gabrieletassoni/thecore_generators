@@ -1,0 +1,42 @@
+var <%= action_name_camel_case %>Cable = null;
+// If the <%= action_name_camel_case %>Function is already defined, then don't redefine it and don't attach it to the eventListener
+if (typeof <%= action_name_camel_case %>Function !== 'function') {
+    function <%= action_name_camel_case %>Function(event) {
+        console.log('Hello from <%= file_name %>', event);
+        // Action Cable WebSocket connection only if <%= action_name_camel_case %>Cable is not already defined and valid
+        if (typeof <%= action_name_camel_case %>Cable !== 'object' || <%= action_name_camel_case %>Cable === null) {
+            <%= action_name_camel_case %>Cable = App.cable.subscriptions.create("ActivityLogChannel", {
+               connected() {
+                   console.log("Connected to the channel:", this);
+                   this.send({ message: '<%= file_name %> Client is connected', topic: "<%= file_name %>", namespace: "subscriptions" });
+               },
+               disconnected() {
+                   console.log("<%= file_name %> Client Disconnected");
+               },
+               received(data) {
+                   if(data["topic"] == "<%= file_name %>") {
+                       console.log("<%= file_name %>", data);
+                       document.getElementById('<%= file_name %>-response').innerHTML = data["message"];
+                   }
+               }
+           });
+        }
+        // Send a message to the server
+        <%= action_name_camel_case %>Cable.send({ message: '<%= file_name %> Client is sending a message', topic: "<%= file_name %>", namespace: "subscriptions" });
+        // Attach a click event listener to the button which sends a fetch GET request and shows the response.
+        // The URL is read from the data-url attribute to avoid ERB interpolation in plain .js files.
+        document.getElementById('<%= file_name %>-id').addEventListener('click', function() {
+            var url = this.dataset.url;
+            document.getElementById('<%= file_name %>-loader').classList.remove('d-none');
+            fetch(url, { headers: { 'Accept': 'application/json' } })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data);
+                document.getElementById('<%= file_name %>-response').innerHTML = data.message;
+                document.getElementById('<%= file_name %>-loader').classList.add('d-none');
+           });
+       });
+    }
+}
+// Attach the function to the eventListener
+document.addEventListener('turbo:load', <%= action_name_camel_case %>Function);

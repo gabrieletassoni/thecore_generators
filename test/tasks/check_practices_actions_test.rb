@@ -138,7 +138,13 @@ class Thecore::CheckPracticesActionsTest < ActiveSupport::TestCase
     assert_equal "My Action", fr_data.dig("fr", "admin", "actions", "my_action", "menu")
   end
 
-  test "lib/collection_actions is scanned with the same rules, but its missing companions are never fixable (no generator)" do
+  test "lib/collection_actions is scanned with the same rules, and --fix regenerates missing companions via CollectionActionGenerator (thecore_generators#21)" do
+    # Collection's companion templates are deliberately byte-identical to Root's (see
+    # CollectionActionGenerator's own CLAUDE.md section) - generated *content* can't prove which
+    # generator rendered them, so the dispatch itself is asserted directly instead.
+    assert_equal Thecore::Generators::CollectionActionGenerator,
+      Thecore::CheckPractices::Runner::ACTION_GENERATOR_CLASSES["collection_action"]
+
     with_valid_scaffold_files!
     register_action_fix_cleanup!
     write_fixture("config/collection_actions/bulk_thing.rb", <<~RUBY)
@@ -152,10 +158,19 @@ class Thecore::CheckPracticesActionsTest < ActiveSupport::TestCase
     companions = data["violations"].select { |v| v["message"].include?("bulk_thing") && v["code"].start_with?("missing_companion") }
 
     assert_equal 3, companions.size
-    assert companions.all? { |v| v["fixable"] == false }
+    assert companions.all? { |v| v["fixable"] }
 
     invoke_task("--fix")
-    refute File.exist?(File.join(DUMMY_ROOT, "app/views/rails_admin/main/bulk_thing.html.erb"))
+
+    view_path = File.join(DUMMY_ROOT, "app/views/rails_admin/main/bulk_thing.html.erb")
+    js_path = File.join(DUMMY_ROOT, "app/assets/javascripts/rails_admin/actions/bulk_thing.js")
+    scss_path = File.join(DUMMY_ROOT, "app/assets/stylesheets/rails_admin/actions/bulk_thing.scss")
+    assert File.exist?(view_path)
+    assert File.exist?(js_path)
+    assert File.exist?(scss_path)
+
+    out_after = invoke_task
+    refute_match(/bulk_thing/, out_after)
   end
 
   test "--atom=NAME scopes the Actions check to that ATOM, and a fix lands inside it, not the host app" do

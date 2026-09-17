@@ -1,3 +1,21 @@
+## 3.9.0
+
+- Add `rails generate thecore:collection_action NAME` (`Thecore::Generators::CollectionActionGenerator`,
+  thecore_generators#21, per ADR 0006 in the thecore repo) — the third sibling to
+  `thecore:root_action`/`thecore:member_action`, structurally identical (same `AtomAware`/
+  `CompanionFiles`/`ActionCompanion` includes, same thin task-method sequence, `action_kind
+  "collection_action"`), needing no changes to any of the three shared modules. No prior
+  `addCollectionAction.js` ever existed to port — its own `templates/action.rb.tt` mirrors
+  `thecore:root_action`'s simplicity (`add_action "<name>", :base, :collection`, a minimal
+  GET/JSON example with an `ActivityLogChannel` broadcast) rather than the more complex,
+  hand-written `save_filters.rb`/`load_filters.rb` pattern already living in
+  `thecore_ui_rails_admin`.
+- `rails thecore:check_practices`'s `ACTION_GENERATOR_CLASSES` now includes
+  `CollectionActionGenerator`, so a missing Collection Action companion (view/JS/SCSS) is
+  `fixable: true` and `--fix` regenerates it via the new generator's own template rendering —
+  closing the gap ADR 0004 tracked as deliberate ("no generator to have gotten it right").
+- See [thecore_generators#21](https://github.com/gabrieletassoni/thecore_generators/issues/21).
+
 ## 3.8.0
 
 - Extend the App application template (thecore_generators#18, ADR 0005 in the thecore

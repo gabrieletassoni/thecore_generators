@@ -25,10 +25,17 @@ thecore:check_practices` (Scaffold Files + Models + Actions, `--fix` included) a
 **Phase 3's App application template** (porting `createApp.js`) is complete as of this release —
 both the core (`lib/templates/app_template.rb`: Rails app + Gemfile stack + vendor placeholders,
 thecore_generators#17) and devcontainer/CI/CLAUDE.md asset fetching from the thecore repo's own
-samples (thecore_generators#18) have shipped. The `thecore:atom` generator and a Collection
-Action generator remain deferred to a future session (ADR 0005). See
+samples (thecore_generators#18) have shipped. See
 [ADR 0005](https://github.com/gabrieletassoni/thecore/blob/release/3/docs/adr/0005-app-template-scoped-to-rails-new-m-assets-sourced-from-thecore-samples.md)
-in the thecore repo for the full design.
+in the thecore repo for the full design. **The Collection Action generator** (`rails generate
+thecore:collection_action`, thecore_generators#21) is also complete as of this release — see
+[ADR 0006](https://github.com/gabrieletassoni/thecore/blob/master/docs/adr/0006-atom-generator-dual-ci-manual-submodule-wiring-collection-action-reuses-existing-infra.md)
+in the thecore repo (`master`, thecore's actual default branch — unlike this gem's own
+`release/3`; the ADR 0001-0005 links above predate that distinction being double-checked; note
+that as of this gem's 3.9.0 release the ADR 0006 commit exists only in a local `thecore`
+checkout, not yet pushed to `origin/master` — same class of operational sequencing issue
+`CLAUDE.md` documents for the App template's samples fetch). The `thecore:atom` generator
+remains in progress (thecore_generators#20/#22).
 
 ### What `rails generate model`/`rails generate migration` do now
 
@@ -207,6 +214,26 @@ templates exactly:
   XHR `GET` here vs. `fetch` there), and the view adds a `form_with(..., method: :patch)` for
   the PATCH half of the example.
 
+### `rails generate thecore:collection_action NAME`
+
+The third sibling to `thecore:root_action`/`thecore:member_action` — structurally identical
+(same shared `AtomAware`/`CompanionFiles`/`ActionCompanion` modules, same file layout, same
+`--atom=NAME`/idempotent-re-run behavior). Unlike Root/Member, there's no
+`addCollectionAction.js` this ports — `checkPractices.js` audited `collection_actions` but
+nothing ever generated them, so this is new, not a port:
+
+```bash
+rails generate thecore:collection_action my_action
+```
+
+Its own `templates/action.rb.tt` mirrors Root Action's simplicity — `add_action "my_action",
+:base, :collection do ... end`, a minimal GET/JSON example with an `ActivityLogChannel`
+broadcast — rather than the more complex, hand-written `save_filters.rb`/`load_filters.rb`
+pattern already living in `thecore_ui_rails_admin`: a generator's starter template exists to be
+customized from a simple base, not to demonstrate every RailsAdmin `:collection` feature. A
+collection action operates against a model's whole index (all records), as distinct from a
+member action (one record) or a root action (global, no model scope at all).
+
 ### `rails thecore:check_practices`
 
 A Ruby port of `thecore_code_extension`'s `checkPractices.js` — audits **Scaffold Files**
@@ -237,17 +264,15 @@ Flags combine freely, e.g. `rails thecore:check_practices -- --atom=my_atom --fi
   `cattr_accessor :json_attrs` for `Api::`, `rails_admin do` for `RailsAdmin::`). Not fixable —
   regenerating over an existing, hand-edited concern could clobber real customization.
 - **Actions** — scans `root_actions`, `member_actions`, and `collection_actions` (in `lib/` for
-  an ATOM, `config/` for the host app), with the same rules for all three:
-  `collection_actions` is scanned even though no generator creates files there yet, since a
-  hand-written one could already exist and go unreported otherwise. Reports missing/broken
-  action-file markers (`RailsAdmin::Config::Actions.add_action`, `http_methods` — never
-  fixable), a missing companion view/JS/SCSS or one present but missing its own marker (a
-  *missing* companion is fixable for `root_action`/`member_action`, by delegating straight to
-  that generator's own template rendering — never for `collection_action`, which has no
-  generator to delegate to; an *existing* companion missing a marker is never fixable, same
-  reasoning as Models), a missing `after_initialize.rb` require line (fixable, all three
-  kinds), and a missing locale entry checked against **every** `*.yml` already present in the
-  locales directory, not just `en`/`it` (fixable, all three kinds).
+  an ATOM, `config/` for the host app), with the same rules for all three. Reports
+  missing/broken action-file markers (`RailsAdmin::Config::Actions.add_action`, `http_methods`
+  — never fixable), a missing companion view/JS/SCSS or one present but missing its own marker
+  (a *missing* companion is fixable for all three kinds — `root_action`/`member_action`/
+  `collection_action` — by delegating straight to that kind's own generator's template
+  rendering; an *existing* companion missing a marker is never fixable, same reasoning as
+  Models), a missing `after_initialize.rb` require line (fixable, all three kinds), and a
+  missing locale entry checked against **every** `*.yml` already present in the locales
+  directory, not just `en`/`it` (fixable, all three kinds).
 
 Default output is human-readable text grouped by file; `--json` emits
 `{ "violations": [{ "file", "line", "message", "severity", "fixable", "code" }] }` — `code` is
@@ -255,9 +280,10 @@ a stable identifier (e.g. `missing_after_initialize`, `orphan_api_include`,
 `missing_companion_view`) a future consumer can filter on without depending on `message` text.
 `--fix` applies every fixable violation in one pass with no confirmation of its own — whoever
 passes it has already decided — then re-scans and reports/exits based on whatever violations
-remain (so a violation this run can't fix, e.g. a `collection_action` companion, still shows up
-after `--fix`). The task exits non-zero whenever any violation remains, zero otherwise, so it's
-usable as a CI gate either with or without `--fix`.
+remain (so a violation this run can't fix, e.g. an action file's own broken
+`RailsAdmin::Config::Actions.add_action` marker, still shows up after `--fix`). The task exits
+non-zero whenever any violation remains, zero otherwise, so it's usable as a CI gate either
+with or without `--fix`.
 
 ### Application Template (`rails new -m`) (thecore_generators#17/#18)
 
