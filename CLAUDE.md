@@ -719,6 +719,25 @@ matching this ticket's "uses Thor's `ask`/`yes?` DSL for any genuine choice poin
 criterion honestly: a developer bootstrapping without network access can decline and run
 `bundle install && rails generate devise:install && ...` by hand once they have connectivity, and
 the Gemfile/vendor-directory content is written either way, regardless of the answer.
+
+**Non-interactive mode (thecore_generators#23)**: `ENV["THECORE_APP_TEMPLATE_NON_INTERACTIVE"]`
+(any non-blank value — same `nil?`/`empty?` blank-safety idiom as `THECORE_SAMPLES_SOURCE` above,
+not a bare truthiness check) bypasses the `yes?` prompt entirely. When set, a second var,
+`ENV["THECORE_APP_TEMPLATE_RUN_INSTALLERS"]`, is **required** — must be exactly `"true"` or
+`"false"` (case-insensitive) — and the template `abort`s with a message naming the missing/invalid
+var if it's absent or unrecognized, rather than silently defaulting either way. Mirrors
+`thecore:atom`'s own `validate_non_interactive_options!` fail-fast philosophy (ADR 0006): never
+guess at a required decision.
+
+**Deliberately NOT auto-triggered by tty absence**, unlike `thecore:atom`'s `TtyDetection`-based
+`effectively_non_interactive?` (which this gem's own generators use when run in-process). This
+template always runs as a genuine separate `rails new` subprocess — its own test seam
+(`spawn_rails_new` in `test/templates/app_template_test.rb`) spawns it via `Open3`, whose stdin is
+a pipe, never a real tty, even on a run that's legitimately simulating interactive use by feeding
+an answer through `stdin_data:`. Auto-triggering on tty absence would misfire on every such
+simulated-interactive test invocation; the explicit env var opt-in avoids that with no loss of
+real-world safety — an unattended run with neither var set still fails loudly, just from a missing
+env var rather than an auto-detected absent tty.
 `run_after_bundle_callbacks` calls every registered `after_bundle` block **unconditionally** —
 even when `--skip-bundle` was passed to `rails new` itself (it is not gated by `bundle_install?`
 the way `run_bundle` is) — so the `yes?` answer captured at top level (before the `after_bundle`

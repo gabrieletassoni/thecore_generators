@@ -401,8 +401,16 @@ for the full design and why the two stay separate).
   each preceded by the necessary `bundle install`) is genuinely optional, gated behind an
   interactive prompt (`yes?`, wrapped in `after_bundle` so it only ever runs once the gems
   above are actually bundled) — a developer bootstrapping without network access can decline
-  and run these by hand later. There is no non-interactive/unattended flag for this in the
-  current version (tracked as a future improvement, not silently missing).
+  and run these by hand later.
+- **Non-interactive/unattended mode**: set `THECORE_APP_TEMPLATE_NON_INTERACTIVE` (any non-blank
+  value) to bypass the installer-chain prompt above. When set, `THECORE_APP_TEMPLATE_RUN_INSTALLERS`
+  (`"true"` or `"false"`) is required — the template aborts with a clear message if it's missing
+  or unrecognized, rather than guessing. Example:
+  ```bash
+  THECORE_APP_TEMPLATE_NON_INTERACTIVE=1 THECORE_APP_TEMPLATE_RUN_INSTALLERS=true \
+    rails new myapp --database=postgresql --asset-pipeline=sprockets \
+    -m https://raw.githubusercontent.com/gabrieletassoni/thecore_generators/release/3/lib/templates/app_template.rb
+  ```
 
 ## Installation
 

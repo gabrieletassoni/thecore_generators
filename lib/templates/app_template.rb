@@ -170,10 +170,44 @@ if options[:asset_pipeline].to_s != "sprockets"
     :yellow
 end
 
-run_setup_now = yes?(
-  "Run `bundle install` and the standard installer generators (devise, rails_admin, " \
-  "active_storage, action_text, action_mailbox, cancan, erd) now? (y/n)"
-)
+# thecore_generators#23: non-interactive mode, triggered ONLY by the explicit env var
+# below -- deliberately NOT auto-detected from tty absence the way `thecore:atom`'s
+# `TtyDetection`-based `effectively_non_interactive?` is (ADR 0006). That precedent
+# works because `AtomGenerator` runs in-process inside its own test, where stubbing
+# `$stdin.tty?`/`$stdout.tty?` (see `association_wiring_test.rb`) is meaningful. This
+# template instead always runs as a genuine separate `rails new` subprocess (its own
+# test seam spawns it via Open3), whose stdin is a pipe -- never a real tty -- even
+# when the test is legitimately simulating interactive use by feeding an answer via
+# `stdin_data`. Auto-triggering on tty absence would misfire on every such simulated-
+# interactive test run; the explicit, deliberate opt-in below avoids that with no loss
+# of real-world safety (an unattended CI run with neither var set still fails loudly
+# below, just one env var short of `thecore:atom`'s own auto-detected equivalent).
+non_interactive = !ENV["THECORE_APP_TEMPLATE_NON_INTERACTIVE"].to_s.strip.empty?
+
+run_setup_now =
+  if non_interactive
+    run_installers_raw = ENV["THECORE_APP_TEMPLATE_RUN_INSTALLERS"]
+    if run_installers_raw.nil? || run_installers_raw.strip.empty?
+      abort(
+        "THECORE_APP_TEMPLATE_NON_INTERACTIVE is set but THECORE_APP_TEMPLATE_RUN_INSTALLERS " \
+        "is not -- set it to \"true\" or \"false\" to say whether the installer chain " \
+        "(devise/rails_admin/active_storage/action_text/action_mailbox/cancan/erd) should run."
+      )
+    end
+    normalized = run_installers_raw.strip.downcase
+    unless %w[true false].include?(normalized)
+      abort(
+        "THECORE_APP_TEMPLATE_RUN_INSTALLERS must be \"true\" or \"false\", got " \
+        "#{run_installers_raw.inspect}."
+      )
+    end
+    normalized == "true"
+  else
+    yes?(
+      "Run `bundle install` and the standard installer generators (devise, rails_admin, " \
+      "active_storage, action_text, action_mailbox, cancan, erd) now? (y/n)"
+    )
+  end
 
 after_bundle do
   next unless run_setup_now

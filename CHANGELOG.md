@@ -1,3 +1,15 @@
+## 3.12.0
+
+- Add a non-interactive/unattended mode for the App application template
+  (thecore_generators#23, per ADR 0007 in the thecore repo): `THECORE_APP_TEMPLATE_NON_INTERACTIVE`
+  (any non-blank value) bypasses the installer-chain `yes?` prompt; when set, the required
+  `THECORE_APP_TEMPLATE_RUN_INSTALLERS` (`"true"`/`"false"`) decides whether the chain runs —
+  the template aborts with a clear message if either is missing/invalid rather than guessing.
+  Deliberately not auto-triggered by tty absence (unlike `thecore:atom`'s `TtyDetection`-based
+  equivalent) — this template always runs as a real subprocess whose stdin is never a tty even in
+  tests simulating interactive use, so tty-based auto-detection would misfire there.
+- See [thecore_generators#23](https://github.com/gabrieletassoni/thecore_generators/issues/23).
+
 ## 3.11.0
 
 - Extend `thecore:atom` (thecore_generators#22, per ADR 0006 in the thecore repo) to fetch

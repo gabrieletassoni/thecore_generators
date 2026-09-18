@@ -120,13 +120,90 @@ class AppTemplateTest < Minitest::Test
     end
   end
 
+  # thecore_generators#23: non-interactive mode, installer chain declined. Fed empty
+  # stdin (not "no\n") specifically to prove the template never reads from stdin at all
+  # on this path -- if it fell through to the interactive `yes?` call despite the env
+  # vars, this would hang (Open3.capture3 has no timeout) rather than fail cleanly, so
+  # an empty-stdin run is a meaningfully stronger assertion than merely checking the
+  # exit status afterward.
+  #
+  # THECORE_APP_TEMPLATE_RUN_INSTALLERS=true is deliberately NOT covered here: that
+  # path performs a real `bundle install` plus several `rails generate`/`rails_command`
+  # network-touching steps, the same "known non-blocking limitation" already documented
+  # for the interactive "yes" path when thecore_generators#17 shipped (see this file's
+  # own git history / CLAUDE.md) -- kept as a manual-verification-only path for the same
+  # reason, not an oversight.
+  def test_non_interactive_mode_skips_installer_chain_when_run_installers_is_false
+    Dir.mktmpdir do |dir|
+      app_path = File.join(dir, "sample_app")
+
+      stdout, stderr, status = spawn_rails_new(
+        app_path, chdir: dir, stdin: "",
+        extra_env: {
+          "THECORE_APP_TEMPLATE_NON_INTERACTIVE" => "1",
+          "THECORE_APP_TEMPLATE_RUN_INSTALLERS" => "false"
+        }
+      )
+      assert status.success?, "expected a clean run with no stdin needed:\n#{stdout}\n#{stderr}"
+
+      # An empty-stdin `yes?` call would itself resolve to "no" (matching this test's
+      # own expected end-state) even without any non-interactive handling at all --
+      # so the interactive prompt text's absence, not just the installer chain's, is
+      # the one signal that actually distinguishes "the env vars were honored" from
+      # "the old interactive path happened to land on the same answer by accident".
+      refute_match(/Run `bundle install` and the standard installer generators/, stdout,
+        "expected the interactive prompt never printed when THECORE_APP_TEMPLATE_NON_INTERACTIVE is set")
+
+      # devise:install/rails_admin:install/active_storage:install are the installer
+      # chain's own first steps -- their absence is the observable proof the chain
+      # never ran, since none of the core Gemfile-stack code above this section creates
+      # this file on its own.
+      refute File.file?(File.join(app_path, "config/initializers/devise.rb")),
+        "expected the installer chain to be skipped when THECORE_APP_TEMPLATE_RUN_INSTALLERS=false"
+    end
+  end
+
+  def test_non_interactive_mode_aborts_when_run_installers_is_unset
+    Dir.mktmpdir do |dir|
+      app_path = File.join(dir, "sample_app")
+
+      stdout, stderr, status = spawn_rails_new(
+        app_path, chdir: dir, stdin: "",
+        extra_env: { "THECORE_APP_TEMPLATE_NON_INTERACTIVE" => "1" }
+      )
+      refute status.success?, "expected the template to abort when the installer-chain choice is unspecified"
+      assert_match(/THECORE_APP_TEMPLATE_RUN_INSTALLERS/, stdout + stderr,
+        "expected the abort message to name the missing env var")
+    end
+  end
+
+  def test_non_interactive_mode_aborts_when_run_installers_is_invalid
+    Dir.mktmpdir do |dir|
+      app_path = File.join(dir, "sample_app")
+
+      stdout, stderr, status = spawn_rails_new(
+        app_path, chdir: dir, stdin: "",
+        extra_env: {
+          "THECORE_APP_TEMPLATE_NON_INTERACTIVE" => "1",
+          "THECORE_APP_TEMPLATE_RUN_INSTALLERS" => "please"
+        }
+      )
+      refute status.success?, "expected the template to abort on an unrecognized value"
+      assert_match(/THECORE_APP_TEMPLATE_RUN_INSTALLERS/, stdout + stderr,
+        "expected the abort message to name the offending env var")
+    end
+  end
+
   private
 
   # Extracted so thecore_generators#18 (which extends this same test with
   # devcontainer/CI/CLAUDE.md asset assertions against the same generated app, per its
   # own acceptance criteria) can reuse this exact invocation rather than re-deriving
-  # the `chdir`/`BUNDLE_GEMFILE`/stdin dance below a second time.
-  def spawn_rails_new(app_path, chdir:, stdin: "no\n")
+  # the `chdir`/`BUNDLE_GEMFILE`/stdin dance below a second time. `extra_env:` was added
+  # for thecore_generators#23's non-interactive-mode tests, merged over the base env
+  # below so callers can override `THECORE_APP_TEMPLATE_NON_INTERACTIVE`/
+  # `THECORE_APP_TEMPLATE_RUN_INSTALLERS` without needing to know the base env exists.
+  def spawn_rails_new(app_path, chdir:, stdin: "no\n", extra_env: {})
     # `chdir` is deliberately the scratch tmp dir, NOT this gem's own root: plain
     # `rails` (railties' exe/rails, via Rails::AppLoader.exec_app) walks *up* the
     # directory tree from cwd looking for a `bin/rails` to delegate to before it
@@ -141,7 +218,7 @@ class AppTemplateTest < Minitest::Test
       # thecore_generators#18: points the template's asset-fetch step at the local
       # fixture above instead of the real raw GitHub URL it defaults to.
       "THECORE_SAMPLES_SOURCE" => SAMPLES_FIXTURE_DIR
-    }
+    }.merge(extra_env)
 
     Open3.capture3(
       env,
