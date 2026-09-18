@@ -793,9 +793,12 @@ explicitly to this gem's own `Gemfile` — `BUNDLE_GEMFILE`, not `cwd`-based Gem
 what tells Bundler which bundle's `rails` to resolve.
 
 **Devcontainer/CI/CLAUDE.md assets are fetched from `thecore`'s own `samples/`, not shipped here**
-(thecore_generators#18): `.devcontainer/*` (`devcontainer.json`, `docker-compose.yml`,
-`Dockerfile`, `create-db-user.sql`, `link-host-home.sh`, `check-plugins.sh`), `.gitlab-ci.yml`,
-and `CLAUDE.md` are all fetched via a `fetch_thecore_sample(relative_path, destination)` helper
+(thecore_generators#18, extended by #25): `.devcontainer/*` (`devcontainer.json`,
+`docker-compose.yml`, `Dockerfile`, `create-db-user.sql`, `link-host-home.sh`,
+`check-plugins.sh`), **both** `.gitlab-ci.yml` and `.github/workflows/ci.yml` (ADR 0007 —
+same git-hosting-agnostic reasoning ADR 0006 already established for `thecore:atom`'s own dual-CI
+generation, no hosting-profile prompt), and `CLAUDE.md` are all fetched via a
+`fetch_thecore_sample(relative_path, destination)` helper
 defined inline in the template (a `def` inside a `rails new -m` template's `instance_eval`d
 content becomes a singleton method on the `AppGenerator` instance being evaluated against — safe
 and ordinary for a Rails application template, not a global `Object` pollution risk; verified
@@ -816,14 +819,15 @@ non-HTTP case is handled by hand instead of trying to bend `get` to do it.
 file) as a real override, silently reading a same-named file relative to whatever the current
 directory happens to be instead of falling back.
 
-**The default URL only serves real content once `thecore`'s `master` carries the commits that
-added `samples/CLAUDE.md`/`samples/.gitlab-ci.yml` and brought `samples/devcontainer/` up to date
-(thecore#14/#15)** — as of this gem's 3.8.0 release those commits exist only in a local checkout,
-not pushed to `origin/master`. Verified live: the default URL currently 404s for `.gitlab-ci.yml`/
-`CLAUDE.md`/the two devcontainer scripts, and serves stale content for `devcontainer.json`/
-`docker-compose.yml`. This is an operational sequencing issue (push `thecore` before relying on
-the default in production), not a defect in this code — but it means `THECORE_SAMPLES_SOURCE`
-pointed at a local `thecore` clone is the only way to exercise the real default content today.
+**The default URL only serves real content once `thecore`'s `master` actually carries the commit
+that added the asset being fetched.** `samples/CLAUDE.md`/`samples/.gitlab-ci.yml`/
+`samples/devcontainer/*` (thecore#14/#15) were pushed as part of the general Phase 4
+push/release pass and are live on `origin/master` today. `samples/.github/workflows/ci.yml`
+(thecore#20, ADR 0007) is the current exception, as of this gem's 3.13.0 release: committed
+locally in `thecore` but not yet pushed, so the default URL still 404s for that one file
+specifically until it is. This is the same operational sequencing issue thecore_generators#18
+first ran into, recurring per-asset rather than a defect in this code — `THECORE_SAMPLES_SOURCE`
+pointed at a local `thecore` clone is the reliable way to exercise not-yet-pushed default content.
 
 Every fetch passes `force: true` — unconditional overwrite, no interactive Thor conflict prompt.
 Of the six `.devcontainer/*` files, four (`devcontainer.json`, `docker-compose.yml`, `Dockerfile`,

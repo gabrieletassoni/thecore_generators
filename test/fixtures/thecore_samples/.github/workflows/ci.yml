@@ -1,0 +1,24 @@
+# Minimal fixture standing in for thecore's real samples/.github/workflows/ci.yml -- exercises
+# the App template's fetch mechanism offline (thecore_generators#25); not a copy of the real
+# file, which this gem doesn't own and shouldn't duplicate.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - version
+  workflow_dispatch:
+
+jobs:
+  build:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - run: sudo -E /usr/bin/app-compile.sh
+
+  to-prod:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - run: /usr/bin/docker-deploy.sh

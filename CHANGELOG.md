@@ -1,3 +1,11 @@
+## 3.13.0
+
+- The App application template now fetches `samples/.github/workflows/ci.yml` unconditionally,
+  alongside the existing `.gitlab-ci.yml` fetch (thecore_generators#25, per ADR 0007 in the
+  thecore repo) — same git-hosting-agnostic reasoning ADR 0006 already established for
+  `thecore:atom`'s own dual-CI generation: no hosting-profile prompt, both files always written.
+- See [thecore_generators#25](https://github.com/gabrieletassoni/thecore_generators/issues/25).
+
 ## 3.12.0
 
 - Add a non-interactive/unattended mode for the App application template

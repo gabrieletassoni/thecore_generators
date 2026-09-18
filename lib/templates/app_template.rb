@@ -153,6 +153,10 @@ chmod ".devcontainer/link-host-home.sh", 0o755
 chmod ".devcontainer/check-plugins.sh", 0o755
 
 fetch_thecore_sample(".gitlab-ci.yml", ".gitlab-ci.yml")
+# thecore_generators#25 (ADR 0007): fetched unconditionally, alongside .gitlab-ci.yml above --
+# no hosting-profile prompt, same reasoning ADR 0006 already established for thecore:atom's own
+# dual-CI generation (git hosting is a generic, per-developer choice, not something to ask about).
+fetch_thecore_sample(".github/workflows/ci.yml", ".github/workflows/ci.yml")
 fetch_thecore_sample("CLAUDE.md", "CLAUDE.md")
 
 # --- Standard installer chain ------------------------------------------------

@@ -391,9 +391,12 @@ for the full design and why the two stay separate).
 - **Devcontainer/CI/CLAUDE.md**, fetched from the `thecore` repo's own `samples/` (single source
   of truth, not duplicated here) and written unconditionally, overwriting whatever the bootstrap
   "Setup Devcontainer" step created: `.devcontainer/*` (base image, plugin mounts, `gh`/`glab`
-  CLI config mounts commented out by default), `.gitlab-ci.yml` (build/test/lint/deploy, no
-  customer-specific paths), and `CLAUDE.md` (universal sections only, project-specific sections
-  left as TODO placeholders). The fetch location is one overridable point,
+  CLI config mounts commented out by default), **both** `.gitlab-ci.yml` and
+  `.github/workflows/ci.yml` (build/test/lint/deploy, no customer-specific paths — no hosting-
+  profile prompt, same git-hosting-agnostic reasoning ADR 0006 established for `thecore:atom`'s
+  own dual-CI generation, extended here by ADR 0007/thecore_generators#25), and `CLAUDE.md`
+  (universal sections only, project-specific sections left as TODO placeholders). The fetch
+  location is one overridable point,
   `ENV["THECORE_SAMPLES_SOURCE"]`, defaulting to the raw GitHub URL for `thecore`'s `samples/`
   on `master` (`thecore`'s actual default branch).
 - **The standard installer chain** (`devise:install`, `rails_admin:install`, `active_storage:

@@ -106,7 +106,7 @@ class AppTemplateTest < Minitest::Test
           "expected the #{cli} CLI config mount to be present but commented out")
       end
 
-      %w[.gitlab-ci.yml CLAUDE.md].each do |file|
+      %w[.gitlab-ci.yml .github/workflows/ci.yml CLAUDE.md].each do |file|
         destination = File.join(app_path, file)
         assert File.file?(destination), "expected #{file} to be fetched from thecore's samples"
         assert_equal File.read(File.join(SAMPLES_FIXTURE_DIR, file)), File.read(destination),
