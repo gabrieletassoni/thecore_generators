@@ -901,9 +901,27 @@ Tests use a `Rails::Generators::TestCase`-based harness against the `test/dummy`
 included in this repo (needed to exercise generators the way a real host app would — file
 placement, migration paths, etc.).
 
+**Postgres-only.** PostgreSQL is the only DB target of every Thecore gem and host app, so
+`test/dummy` runs on it too — never SQLite (no `sqlite3` gem; the Gemfile carries `pg`).
+`test/dummy/config/database.yml` is `adapter: postgresql` (host/port/user/password from
+`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`, defaulting to `db`/`5432`/`postgres`/`postgres`), with
+databases `thecore_generators_{development,test,production}`. Because `DATABASE_URL` overrides
+`database.yml` and the devcontainer points it at the host app's **dev** DB, `test/dummy/config/boot.rb`
+rewrites `DATABASE_URL`'s database name to `thecore_generators_<RAILS_ENV>` (keeping its
+server/credentials) whenever it is a `postgres*` URL — done in `boot.rb`, not `test_helper.rb`,
+so every entry point (`bin/rails db:*`, the `db:test:prepare` subprocess) is covered and a test
+run can never touch the host app's database. Same pattern as `mytask`/`model_driven_api`. No need
+to unset `DATABASE_URL` any more.
+
+One-time setup (creates `thecore_generators_test` on the configured server):
+
 ```bash
 bundle install
-env -u DATABASE_URL bundle exec rake test   # unset DATABASE_URL if it points at Postgres
+(cd test/dummy && RAILS_ENV=test bin/rails db:create)
+```
+
+```bash
+bundle exec rake test
 bundle exec ruby -Itest test/generators/thecore/model_generator_test.rb   # single file
 ```
 

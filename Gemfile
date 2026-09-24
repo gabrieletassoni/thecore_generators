@@ -6,9 +6,11 @@ gemspec
 
 # The gemspec only depends on railties (see thecore_generators.gemspec for
 # why); the test/dummy app used by the Rails::Generators::TestCase harness
-# needs the full framework and a database to boot.
+# needs the full framework and a database to boot. PostgreSQL is the only DB
+# target of every Thecore gem and host app, so the dummy app runs on it too
+# (see test/dummy/config/database.yml and boot.rb) -- never SQLite.
 gem "rails", "~> 7.2"
-gem "sqlite3"
+gem "pg"
 
 # Rails 7.2's rails/test_unit/line_filtering.rb overrides Minitest::Test.run
 # with a 2-arg signature (reporter, options); Minitest 6.x changed that

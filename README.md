@@ -433,17 +433,20 @@ git-based dependencies — see the Gemfile's comment — purely so
 `test/generators/thecore/model_generator_default_concern_behavior_test.rb` can prove the
 no-concern default actually works at runtime, not just that no file was written.
 
+`test/dummy` runs on PostgreSQL only (never SQLite). Create its test database once, then run
+the suite:
+
 ```bash
 bundle install
+(cd test/dummy && RAILS_ENV=test bin/rails db:create)
 bundle exec rake test
 ```
 
-If your shell has `DATABASE_URL` set to a PostgreSQL URL (e.g. inside the Thecore
-devcontainer), unset it first — it overrides `test/dummy`'s own SQLite3 test config:
-
-```bash
-env -u DATABASE_URL bundle exec rake test
-```
+Connection settings come from `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD` (defaults
+`db`/`5432`/`postgres`/`postgres`). If `DATABASE_URL` is set to a PostgreSQL URL (e.g. inside the
+Thecore devcontainer), `test/dummy/config/boot.rb` keeps its server/credentials but always
+swaps the database name to `thecore_generators_<RAILS_ENV>`, so tests never touch the host
+app's database — no need to unset it.
 
 `bundle exec rake` alone runs the same suite (`test` is the default Rake task).
 
