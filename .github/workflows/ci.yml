@@ -11,6 +11,28 @@ jobs:
     name: Test suite
     runs-on: ubuntu-latest
 
+    # The dummy app runs on PostgreSQL only (never SQLite — see test/dummy/config/database.yml),
+    # so CI needs a real server. database.yml reads PGHOST/PGPORT/PGUSER/PGPASSWORD.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      RAILS_ENV: test
+
     steps:
       - uses: actions/checkout@v4
 
@@ -19,6 +41,9 @@ jobs:
         with:
           ruby-version: '3.3'
           bundler-cache: true # runs 'bundle install' and caches installed gems automatically
+
+      - name: Create the test database
+        run: cd test/dummy && bin/rails db:create
 
       - name: Run test suite
         run: bundle exec rake test
