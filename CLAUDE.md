@@ -63,6 +63,12 @@ such folder, so this module resolves it from the invoking process's `Dir.pwd` in
   Otherwise it falls back to `cwd`-based `atom_root_of` detection. Raises `Thor::Error` (not a
   silent nil) when an explicit `--atom=NAME` doesn't resolve to a valid ATOM, or when `cwd`
   lands inside `vendor/submodules/` but the directory has no gemspec.
+  A cwd-detected ATOM is only honored when it is `app_root` itself or lives inside it — an
+  ATOM that merely *encloses* `app_root` (an ATOM's own `test/dummy`, or this gem's own test
+  suite run from a checkout at `<host>/vendor/submodules/thecore_generators` with a tmp
+  `destination_root` nested inside it) is ignored, otherwise every generated file would be
+  redirected out of `destination_root` into that enclosing directory. For a real `rails
+  generate` the app root is always an ancestor of cwd, so the normal outcome is unchanged.
 - **`model_root_for(class_name:, app_root:)`** — a different lookup, used only by
   `AssociationWiring` (below): given a model's class name, finds which app/ATOM its
   `app/models/<name>.rb` file actually lives under (host app's own `app/models` first, then each

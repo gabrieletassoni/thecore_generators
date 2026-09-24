@@ -37,7 +37,7 @@ module Thecore
         atom_name = atom_name.to_s.strip
         return resolve_named_atom(app_root, atom_name) unless atom_name.empty?
 
-        resolve_cwd_atom(cwd)
+        resolve_cwd_atom(cwd, app_root)
       end
 
       # Walks up from `dir` until the immediate parent directory is
@@ -137,9 +137,21 @@ module Thecore
             "(expected a #{atom_name}.gemspec or #{atom_name.tr('-', '_')}.gemspec inside it)."
         end
 
-        def resolve_cwd_atom(cwd)
+        # A cwd-detected ATOM only counts when it belongs to the app being
+        # generated into: it must be `app_root` itself (e.g. an engine's own
+        # bin/rails, whose destination_root is already the ATOM) or live
+        # inside it. For a real `rails generate` the app root is always an
+        # ancestor of cwd, so this never changes the normal outcome — but
+        # when `app_root` itself sits *inside* some `vendor/submodules/<x>/`
+        # tree (an ATOM's own test/dummy app, or a gem checked out as a
+        # submodule of a host app and running its own generator tests with
+        # a tmp destination_root), walking up from cwd would otherwise find
+        # that enclosing <x> and redirect every file *out of* app_root into
+        # it. See thecore_generators' CLAUDE.md, WorkspaceContext.
+        def resolve_cwd_atom(cwd, app_root)
           candidate = atom_root_of(cwd)
           return nil unless candidate
+          return nil unless within_app_root?(candidate, app_root)
 
           unless valid_atom_dir?(candidate)
             raise Thor::Error,
@@ -148,6 +160,13 @@ module Thecore
           end
 
           candidate
+        end
+
+        def within_app_root?(candidate, app_root)
+          return true if app_root.to_s.empty?
+
+          root = File.expand_path(app_root.to_s)
+          candidate == root || candidate.start_with?("#{root}/")
         end
       end
     end

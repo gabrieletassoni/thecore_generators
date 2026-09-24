@@ -66,6 +66,24 @@ class Thecore::Generators::WorkspaceContextTest < ActiveSupport::TestCase
     assert_raises(Thor::Error) { WC.atom_dir_for(cwd: incomplete, app_root: @app_root) }
   end
 
+  test "atom_dir_for ignores a cwd-detected ATOM that encloses app_root instead of living inside it" do
+    # e.g. this very gem checked out at <host>/vendor/submodules/thecore_generators,
+    # running its generator tests with a tmp destination_root nested inside
+    # itself: walking up from cwd finds the gem as an "ATOM", but it is not
+    # part of the app being generated into, so files must stay in app_root.
+    enclosing_atom = File.join(@tmp, "outer_app", "vendor", "submodules", "outer_gem")
+    FileUtils.mkdir_p(enclosing_atom)
+    FileUtils.touch(File.join(enclosing_atom, "outer_gem.gemspec"))
+    nested_app_root = File.join(enclosing_atom, "tmp", "generator_test", "model")
+    FileUtils.mkdir_p(nested_app_root)
+
+    assert_nil WC.atom_dir_for(cwd: enclosing_atom, app_root: nested_app_root)
+  end
+
+  test "atom_dir_for still resolves a cwd ATOM that is app_root itself" do
+    assert_equal @atom_dir, WC.atom_dir_for(cwd: @atom_dir, app_root: @atom_dir)
+  end
+
   test "atom_dir_for with atom_name overrides cwd-based detection" do
     assert_equal @atom_dir, WC.atom_dir_for(cwd: @app_root, app_root: @app_root, atom_name: "sample_atom")
   end
