@@ -164,6 +164,35 @@ fetch_thecore_sample(".gitlab-ci.yml", ".gitlab-ci.yml")
 fetch_thecore_sample(".github/workflows/ci.yml", ".github/workflows/ci.yml")
 fetch_thecore_sample("CLAUDE.md", "CLAUDE.md")
 
+# --- Test database rule (the pilot's, mytask-imas test/test_helper.rb) --------
+# The devcontainer sets one global DATABASE_URL pointing at the development
+# database, and a URL wins over database.yml's per-environment names -- so
+# without this, `rails test` would run (and wipe fixtures' tables) against
+# development. Swapping whatever database the URL names for `<app>_test`, before
+# the app boots, gives tests their own database on the same server. The pilot's
+# version is a regex on the path, which mangles a URL naming only the server (the
+# form the CI samples use, so `db:test:prepare` takes database.yml's test name);
+# URI handles both.
+# Skipped when `rails new --skip-test` generated no test helper.
+if File.exist?(File.join(destination_root, "test/test_helper.rb"))
+  insert_into_file "test/test_helper.rb", after: /^ENV\[["']RAILS_ENV["']\] \|\|= ["']test["']\n/ do
+    <<~RUBY
+
+      # DATABASE_URL (set by the devcontainer) names the development database and wins
+      # over config/database.yml: replace whatever database it names (or add one, when it
+      # names only the server) with the test one, so running tests never touches
+      # development data.
+      if ENV["DATABASE_URL"]
+        require "uri"
+        test_database_url = URI.parse(ENV["DATABASE_URL"])
+        test_database_url.path = "/#{app_name}_test"
+        ENV["DATABASE_URL"] = test_database_url.to_s
+      end
+
+    RUBY
+  end
+end
+
 # --- Standard installer chain ------------------------------------------------
 # Needs the gems added above actually bundled and installable, i.e. real network
 # access — genuinely optional (not a test-only escape hatch): a developer

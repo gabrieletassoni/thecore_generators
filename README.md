@@ -399,6 +399,9 @@ for the full design and why the two stay separate).
   location is one overridable point,
   `ENV["THECORE_SAMPLES_SOURCE"]`, defaulting to the raw GitHub URL for `thecore`'s `samples/`
   on `master` (`thecore`'s actual default branch).
+- **Test-database rule** — the generated `test/test_helper.rb` replaces whatever database
+  `DATABASE_URL` names with `<app>_test` before the app boots. The devcontainer's `DATABASE_URL`
+  points at development, so running tests never touches development data.
 - **The standard installer chain** (`devise:install`, `rails_admin:install`, `active_storage:
   install`, `action_text:install`, `action_mailbox:install`, `cancan:ability`, `erd:install`,
   each preceded by the necessary `bundle install`) is genuinely optional, gated behind an
