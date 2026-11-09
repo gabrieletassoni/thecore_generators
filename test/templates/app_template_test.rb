@@ -48,14 +48,18 @@ class AppTemplateTest < Minitest::Test
           "expected the core Gemfile stack to include an active `#{gem_name}` line")
       end
 
-      # ADR 0001 (thecore repo) requires these two specific floors for the
-      # DefaultModuleRegistry default-concern behavior -- pinned exactly, not loosely,
-      # so a future edit that weakens either floor below the documented minimum fails
-      # this test rather than passing silently.
-      assert_match(/^\s*gem ["']model_driven_api["'],\s*["']~>\s*3\.9["']/, gemfile,
-        "expected model_driven_api to meet the ADR 0001 DefaultModuleRegistry floor (~> 3.9)")
-      assert_match(/^\s*gem ["']thecore_ui_rails_admin["'],\s*["']~>\s*3\.8["']/, gemfile,
-        "expected thecore_ui_rails_admin to meet the ADR 0001 DefaultModuleRegistry floor (~> 3.8)")
+      # ADR 0001 (thecore repo) requires model_driven_api >= 3.9.0 / thecore_ui_rails_admin
+      # >= 3.8.0 for the DefaultModuleRegistry default-concern behavior. The security
+      # floors above them are asserted on the real samples (assert_gem_floor_practices).
+      dsl = Bundler::Dsl.new
+      dsl.eval_gemfile(File.join(app_path, "Gemfile"))
+      # Last release below each ADR 0001 floor: the Gemfile must refuse it.
+      { "model_driven_api" => "3.8.99", "thecore_ui_rails_admin" => "3.7.99" }.each do |name, below_floor|
+        dep = dsl.dependencies.find { |d| d.name == name }
+        assert dep, "expected an active `#{name}` line"
+        refute dep.requirement.satisfied_by?(Gem::Version.new(below_floor)),
+          "expected #{name} to stay above the ADR 0001 floor (refusing #{below_floor})"
+      end
 
       # Matched loosely (any 3.x, not a hardcoded minor) since this is this gem's own,
       # self-referential version constraint -- it will legitimately move on every
@@ -64,13 +68,14 @@ class AppTemplateTest < Minitest::Test
       assert_match(/^\s*gem ["']thecore_generators["'],\s*["']~>\s*3\.\d+["'],\s*group:\s*:development/, gemfile,
         "expected thecore_generators to be added as a :development-only dependency")
 
-      %w[
-        thecore_auth_commons thecore_settings thecore_print_commons thecore_background_jobs
-        thecore_ui_commons thecore_tcp_debug thecore_download_documents thecore_dataentry_commons
-        thecore_connectors
-      ].each do |gem_name|
+      %w[thecore_print_commons thecore_tcp_debug thecore_download_documents thecore_dataentry_commons].each do |gem_name|
         assert_match(/^\s*#\s*gem ["']#{Regexp.escape(gem_name)}["'].*#.+/, gemfile,
           "expected `#{gem_name}` to be listed commented-out with a purpose comment, discoverable but off by default")
+      end
+      # Gems that arrive as dependencies anyway are named as such, never offered as optional.
+      %w[thecore_settings thecore_background_jobs thecore_ui_commons].each do |gem_name|
+        refute_match(/^\s*#?\s*gem ["']#{gem_name}["']/, gemfile, "`#{gem_name}` is already a dependency, not optional")
+        assert_match(/^#.*#{gem_name} \(via thecore_/, gemfile, "expected `#{gem_name}` named as already in the bundle")
       end
 
       %w[submodules external].each do |placeholder_dir|
@@ -151,6 +156,7 @@ class AppTemplateTest < Minitest::Test
       assert_ci_test_database_practices(app_path)
       assert_agent_docs_practices(app_path)
       assert_docker_build_practices(app_path)
+      assert_gem_floor_practices(app_path)
     end
   end
 
@@ -312,6 +318,55 @@ class AppTemplateTest < Minitest::Test
       "expected no root Dockerfile, so the Thecore build script uses the Thecore Dockerfile"
     refute File.exist?(File.join(app_path, "bin", "docker-entrypoint")),
       "expected no bin/docker-entrypoint (only the removed Rails Dockerfile runs it)"
+  end
+
+  # Each gem's first release with the fix the pilot (mytask-imas) depends on, and the
+  # last release without it: the generated Gemfile must accept the first and refuse the
+  # second, so a `bundle update --conservative` from an old lock can't stay below it.
+  # The transitive ones (thecore_auth_commons, thecore_backend_commons) need their own
+  # line for that.
+  GEM_FLOORS = {
+    "rails" => %w[7.2.4 7.2.3.2], # Rails 7.2.3.1/7.2.3.2 security fixes, carried by 7.2.4
+    "puma" => %w[7.2.1 7.2.0], # PROXY protocol v1 CVE-2026-47736/47737
+    "model_driven_api" => %w[3.13.1 3.13.0], # the API never instantiates the class named by the path
+    "thecore_auth_commons" => %w[3.6.3 3.6.2], # OAuth takes the identity only from OmniAuth
+    "thecore_backend_commons" => %w[3.9.1 3.9.0], # ActionCable JWT verification (3.9.0: rubyzip CVE)
+    "thecore_ui_rails_admin" => %w[3.8.7 3.8.6] # RailsAdmin's User create form answered 500 under Devise 5
+  }.freeze
+  # Action Cable 7.2's Redis adapter requires `redis >= 4, < 6` when it loads.
+  REDIS_BROKEN = "6.0.0"
+
+  # The pilot's Gemfile floors and pins (thecore_devcontainer#17), checked twice: on the
+  # Gemfile's requirements, and on a real `bundle lock` against rubygems.org, which must
+  # resolve and pick versions the app can boot with.
+  def assert_gem_floor_practices(app_path)
+    gemfile = File.join(app_path, "Gemfile")
+    dsl = Bundler::Dsl.new
+    dsl.eval_gemfile(gemfile)
+    requirements = dsl.dependencies.group_by(&:name).transform_values { |deps| deps.map(&:requirement) }
+
+    GEM_FLOORS.each do |name, (fixed, vulnerable)|
+      reqs = requirements[name]
+      assert reqs, "expected the Gemfile to declare #{name}, to set its floor"
+      assert reqs.all? { |r| r.satisfied_by?(Gem::Version.new(fixed)) }, "expected the Gemfile to accept #{name} #{fixed}"
+      refute reqs.all? { |r| r.satisfied_by?(Gem::Version.new(vulnerable)) },
+        "expected the Gemfile to refuse #{name} #{vulnerable}"
+    end
+    assert requirements["redis"], "expected the Gemfile to pin redis for Action Cable's adapter"
+    refute requirements["redis"].all? { |r| r.satisfied_by?(Gem::Version.new(REDIS_BROKEN)) },
+      "expected the Gemfile to refuse redis #{REDIS_BROKEN}, which Action Cable 7.2 refuses at load"
+
+    stdout, stderr, status = Bundler.with_unbundled_env do
+      Open3.capture3({ "BUNDLE_GEMFILE" => gemfile }, "bundle", "lock", chdir: app_path)
+    end
+    assert status.success?, "`bundle lock` of the generated app failed:\n#{stdout}\n#{stderr}"
+    locked = Bundler::LockfileParser.new(File.read("#{gemfile}.lock")).specs.to_h { |s| [s.name, s.version] }
+    GEM_FLOORS.each do |name, (fixed, _)|
+      assert_operator locked.fetch(name), :>=, Gem::Version.new(fixed), "expected #{name} >= #{fixed} in the lock"
+    end
+    assert_operator locked.fetch("redis"), :<, Gem::Version.new(REDIS_BROKEN), "expected redis < 6 in the lock"
+    # Sidekiq 7 (via thecore_background_jobs) broke on connection_pool 3; 7.3.10 caps it itself.
+    assert_operator locked.fetch("connection_pool"), :<, Gem::Version.new("3"), "expected connection_pool 2.x in the lock"
   end
 
   AGENT_DOCS = %w[issue-tracker.md triage-labels.md domain.md].freeze

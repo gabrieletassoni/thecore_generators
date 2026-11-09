@@ -385,16 +385,20 @@ files that bootstrap step created, by design. See
 for the full design and why the two stay separate).
 
 - **Core Gemfile stack, active** — `devise`, `cancancan`, `rails_admin`, `sassc-rails`,
-  `model_driven_api` (`~> 3.9`), `thecore_ui_rails_admin` (`~> 3.8` — both meeting ADR 0001's
-  `DefaultModuleRegistry` floor), `rails-erd` (`:development`). `thecore_generators` itself is
-  added too, `group: :development` — so the generated app can immediately use every
-  generator/task documented above without a manual Gemfile edit first.
-- **The rest of the generic Thecore ecosystem, commented out** — `thecore_auth_commons`,
-  `thecore_settings`, `thecore_print_commons`, `thecore_background_jobs`, `thecore_ui_commons`,
-  `thecore_tcp_debug`, `thecore_download_documents`, `thecore_dataentry_commons`,
-  `thecore_connectors`, each with a one-line purpose comment — discoverable but off by default,
-  the same "commented but documented" philosophy ADR 0005 applies to the devcontainer's `gh`/
-  `glab` CLI mounts below.
+  `model_driven_api` (`>= 3.13.1`), `thecore_ui_rails_admin` (`>= 3.8.7`), `rails-erd`
+  (`:development`). `thecore_generators` itself is added too, `group: :development` — so the
+  generated app can immediately use every generator/task documented above without a manual
+  Gemfile edit first.
+- **Security floors and pins** — `thecore_backend_commons >= 3.9.1` and `thecore_auth_commons >=
+  3.6.3` (transitive, listed for their floor), `rails >= 7.2.4`, `puma >= 7.2.1`, and the pins
+  `redis < 6` (Action Cable 7.2) and `connection_pool ~> 2.4` (Sidekiq 7). Each carries its reason
+  in a Gemfile comment.
+- **The rest of the generic Thecore ecosystem, commented out** — `thecore_print_commons`,
+  `thecore_tcp_debug`, `thecore_download_documents`, `thecore_dataentry_commons`, each with a
+  one-line purpose comment — discoverable but off by default, the same "commented but documented"
+  philosophy ADR 0005 applies to the devcontainer's `gh`/`glab` CLI mounts below.
+  `thecore_settings`, `thecore_background_jobs` and `thecore_ui_commons` are named as already in
+  the bundle (dependencies of the gems above), not offered.
 - **`vendor/submodules/`/`vendor/external/`** — created empty (a `.keep` file each), not
   pre-wired with any submodule or gem. Per ADR 0005 these are developer-convenience clone
   locations, not template content.
