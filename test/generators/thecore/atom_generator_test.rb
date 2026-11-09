@@ -163,6 +163,11 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     end
     assert_file "#{atom}/db/seeds.rb", /Seeding Data into DB from tcp_debugger/
 
+    # The host-app pieces the Thecore engines need at boot, in the dummy app.
+    assert_file "#{atom}/test/dummy/app/models/ability.rb", /class Ability\n  include CanCan::Ability/
+    assert_file "#{atom}/test/dummy/config/initializers/devise.rb", %r{require "devise/orm/active_record"}
+    assert_file "#{atom}/Gemfile", /^gem 'minitest', '~> 5\.25'$/
+
     assert_file "#{atom}/config/locales/en.yml" do |content|
       assert_nil YAML.safe_load(content)["en"]
     end
@@ -195,6 +200,8 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     assert_file "#{atom}/CLAUDE.md" do |content|
       assert_equal File.read(File.join(SAMPLES_FIXTURE_DIR, "ATOM_CLAUDE.md")), content
     end
+
+    assert_generated_atom_tests_pass(atom)
   end
 
   test "--skip-api-admin-deps omits model_driven_api/thecore_ui_rails_admin from the Gemfile, gemspec, and entry file" do
@@ -220,6 +227,13 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     # Scaffold Files/directories are still created regardless of this choice.
     assert_file "#{atom}/config/initializers/after_initialize.rb"
     assert_file "#{atom}/app/models/concerns/api/.keep"
+
+    # No CanCan/Devise in this bundle: no abilities initializer, no dummy Ability/Devise setup.
+    assert_no_file "#{atom}/config/initializers/abilities.rb"
+    assert_no_file "#{atom}/test/dummy/app/models/ability.rb"
+    assert_no_file "#{atom}/test/dummy/config/initializers/devise.rb"
+
+    assert_generated_atom_tests_pass(atom)
   end
 
   test "does not duplicate an existing host Gemfile entry for the same gem name" do
@@ -282,6 +296,24 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     end
     assert status.success?, "loading #{boot} failed:\n#{stderr}"
     stdout
+  end
+
+  # S2: the freshly generated ATOM passes its own test suite, untouched, on PostgreSQL. Runs
+  # what an ATOM author runs (bundle install, create the test database, `bin/rails test`) in
+  # the ATOM's own bundle, outside this gem's. The database server is whatever the dummy's
+  # database.yml/DATABASE_URL resolve to (`db` in the devcontainer and in this suite's docker
+  # run); the test-database rule keeps it on tcp_debugger_test either way.
+  def assert_generated_atom_tests_pass(atom)
+    atom_path = File.join(destination_root, atom)
+    env = { "BUNDLE_GEMFILE" => File.join(atom_path, "Gemfile"), "RAILS_ENV" => "test" }
+    output = ["bundle install --quiet", "bin/rails db:create", "bin/rails test"].map do |command|
+      output, status = Bundler.with_unbundled_env do
+        Open3.capture2e(env, command, chdir: atom_path)
+      end
+      assert status.success?, "`#{command}` failed in the generated ATOM:\n#{output}"
+      output
+    end.last
+    assert_match(/[1-9]\d* runs, \d+ assertions, 0 failures, 0 errors/, output, "the ATOM's own tests didn't run")
   end
 
   def create_host_gemfile!

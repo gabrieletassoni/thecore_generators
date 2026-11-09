@@ -27,37 +27,71 @@ gem "rails_admin"
 # this declaration must stay regardless, since sassc-rails needs to be active even
 # when the installer chain below is declined.
 gem "sassc-rails"
-# ADR 0001 (thecore repo) requires model_driven_api >= 3.9.0 / thecore_ui_rails_admin
-# >= 3.8.0 for the DefaultModuleRegistry default-concern behavior this whole ecosystem
-# now relies on -- matching the floor this gem's own Gemfile already pins to (see its
-# comment), not an arbitrary choice.
-gem "model_driven_api", "~> 3.9"
-gem "thecore_ui_rails_admin", "~> 3.8"
+
+# --- Floors and pins ----------------------------------------------------------
+# Each floor is the first release carrying a fix the pilot (mytask-imas) depends on, so
+# a `bundle update --conservative` from an old lock can't stay below it. ADR 0001
+# (thecore repo) only needed model_driven_api >= 3.9.0 / thecore_ui_rails_admin >= 3.8.0
+# (DefaultModuleRegistry); the floors below are higher.
+#   - model_driven_api 3.13.1: the generic API no longer instantiates the class named by
+#     the request path (any JWT could run `Tempfile.new` through `GET /api/v2/tempfiles`).
+#   - thecore_ui_rails_admin 3.8.7: RailsAdmin's User create form answered 500 under
+#     Devise 5, which thecore_auth_commons 3.6.3 requires.
+gem "model_driven_api", "~> 3.13", ">= 3.13.1"
+gem "thecore_ui_rails_admin", "~> 3.8", ">= 3.8.7"
+# Both already arrive as dependencies of the two gems above; listed only for their floors.
+#   - thecore_backend_commons 3.9.1: ActionCable verifies the JWT's signature and expiry
+#     (3.9.0 moved to roo 3, so rubyzip >= 3.4, CVE-2026-85396). Goes to ">= 3.10" once
+#     3.10.0 (no job retries by default, thecore_devcontainer#16) is on RubyGems.
+#   - thecore_auth_commons 3.6.3: OAuth login takes the identity only from OmniAuth's
+#     verified data, never from request params (3.6.2: no fixed initial admin password).
+gem "thecore_backend_commons", "~> 3.9", ">= 3.9.1"
+gem "thecore_auth_commons", "~> 3.6", ">= 3.6.3"
+# `rails new` already declares rails and puma: their lines are rewritten, since a second
+# `gem` line with a different requirement is a Bundler error.
+#   - rails 7.2.4: carries the 7.2.3.1/7.2.3.2 security fixes.
+#   - puma 7.2.1: fixes the PROXY protocol v1 CVE-2026-47736/47737.
+gsub_file "Gemfile", /^gem ["']rails["'].*$/, 'gem "rails", "~> 7.2", ">= 7.2.4"'
+gsub_file "Gemfile", /^gem ["']puma["'].*$/, 'gem "puma", ">= 7.2.1"'
+# Pins still needed (checked against rubygems.org on 2026-11-09):
+#   - redis < 6: Action Cable 7.2's Redis adapter (production's cable.yml) requires
+#     `redis >= 4, < 6` when it loads. redis-namespace (via thecore_background_jobs) only
+#     asks for `>= 4`, so a fresh resolve takes redis 6.0.0 and production crashes at boot
+#     with a Gem::LoadError.
+#   - connection_pool ~> 2.4: connection_pool 3 changed TimedStack#pop and breaks Sidekiq
+#     7's scheduler thread. Sidekiq 7.3.10 caps it below 3 itself, but 7.3.9 and earlier
+#     don't, and Bundler can still pick that pair: a fresh resolve of this gem's own dev
+#     bundle took sidekiq 7.3.9 with connection_pool 3.0.2 (a fresh app took 7.3.10).
+#     thecore_background_jobs keeps `sidekiq ~> 7.0`, so drop this pin once it moves to
+#     Sidekiq 8 (which requires connection_pool >= 3).
+gem "redis", "< 6"
+gem "connection_pool", "~> 2.4"
 gem "rails-erd", group: :development
 
 # thecore_generators itself is dev-tooling only (it hooks `rails g model`/`migration`,
 # see ADR 0002 in the thecore repo) — never a runtime dependency, so it goes in the
 # :development group. A single-line `group:` option is equivalent to (and simpler
 # than) createApp.js's manual `group :development do ... end` block insertion.
-gem "thecore_generators", "~> 3.6", group: :development
+gem "thecore_generators", "~> 3.13", group: :development
 
 # --- Optional ecosystem gems, discoverable but off by default ---------------
 # Same "commented but documented" philosophy as the devcontainer's gh/glab CLI
 # mounts (ADR 0005): each of these publishes to RubyGems.org (see thecore's own
 # CLAUDE.md) but isn't needed by every app, so it starts commented out with a
 # one-line description — uncomment only the ones this project actually needs.
+# The ones already in the bundle as dependencies are named, not offered.
 append_to_file "Gemfile", <<~RUBY
 
+  # Already in the bundle as dependencies of the gems above, so don't add them:
+  #   thecore_settings (via thecore_auth_commons)
+  #   thecore_background_jobs (via thecore_backend_commons)
+  #   thecore_ui_commons (via thecore_ui_rails_admin)
+
   # The rest of the generic Thecore ecosystem — uncomment only what you need.
-  # gem "thecore_auth_commons", "~> 3.0" # Role/permission/predicate models and authorization scaffolding
-  # gem "thecore_settings", "~> 3.0" # ThecoreSettings key/value configuration store
   # gem "thecore_print_commons", "~> 3.0" # Shared PDF/print generation helpers
-  # gem "thecore_background_jobs", "~> 3.0" # Shared background job scheduling helpers
-  # gem "thecore_ui_commons", "~> 3.0" # Shared UI helpers/components for the admin frontend
   # gem "thecore_tcp_debug", "~> 3.0" # TCP-level debugging/diagnostics support
   # gem "thecore_download_documents", "~> 3.0" # Document download support
   # gem "thecore_dataentry_commons", "~> 3.0" # Shared data-entry UI helpers
-  # gem "thecore_connectors" # Helpers for connecting to external systems/data sources
 RUBY
 
 # --- Developer-convenience placeholder directories --------------------------
@@ -107,40 +141,18 @@ remove_file "bin/docker-entrypoint"
 # directory and read directly — this gem's own offline test points it at a
 # fixture instead.
 #
-# NOTE: this default URL only serves real content once `thecore`'s `master`
-# carries the commits that added `samples/CLAUDE.md`/`samples/.gitlab-ci.yml`
-# and brought `samples/devcontainer/` up to date (thecore#14/#15) — as of this
-# gem's own 3.8.0 release those commits exist only in a local checkout, not
-# pushed to `origin/master` yet. Until they're pushed, the default URL 404s for
-# `.gitlab-ci.yml`/`CLAUDE.md`/the two devcontainer scripts and serves stale
-# content for `devcontainer.json`/`docker-compose.yml`. This is an operational
-# sequencing issue (push `thecore` before relying on the default in production),
-# not a defect in this code — but it means `THECORE_SAMPLES_SOURCE` pointed at a
-# local clone of `thecore` is the only way to exercise the real default content
-# today.
-#
 # Every write below is unconditional (`force: true`, no interactive prompt).
-# Of the eight `.devcontainer/*` files, four (`devcontainer.json`,
-# `docker-compose.yml`, `Dockerfile`, `create-db-user.sql`) are expected to
-# already exist, written by the separate, prior "Setup Devcontainer" bootstrap
-# step this template runs inside of (verified directly against that command's
-# source, `thecore_code_extension/commands/setupDevContainer.js`) — replacing
-# them is the whole point, not a conflict to ask about. The other two
-# (`link-host-home.sh`/`check-plugins.sh`) are *not* written by that step at
-# all — genuinely new files here, not overwrites — but `force: true` is harmless
-# for a new file and keeps every write in this block uniform. The seventh,
-# `heal-stale-containers.sh` (run by `initializeCommand`, ADR 0005 in
-# thecore_devcontainer), is written by that step only from the extension
-# release after 3.10.0, so it may be either. The eighth, `github-accounts.sh`
-# (run by `postCreateCommand`: one SSH key per GitHub account), is likewise new
-# unless a later extension release writes it too.
-# `.gitlab-ci.yml`/`CLAUDE.md` don't exist yet in the documented flow either,
-# but stay unconditional too so re-running this template later
-# (`bin/rails app:template`) is a clean overwrite, not a prompt.
+# Inside the documented flow, the separate, prior "Setup Devcontainer" step
+# (`thecore_code_extension/commands/setupDevContainer.js`) has already written the
+# eight `.devcontainer/*` files; replacing them with the samples is the point, not a
+# conflict to ask about. With a bare `rails new -m` (or an older extension release)
+# some or all of them are new files instead, and `force: true` is harmless there.
+# `.gitlab-ci.yml`/`CLAUDE.md` and the agent docs stay unconditional too, so
+# re-running this template later (`bin/rails app:template`) is a clean overwrite,
+# not a prompt.
 #
-# A fetch failure (today: the 404s above; going forward: any network blip, or
-# `thecore` reorganizing `samples/`) aborts the whole template with a clear,
-# specific message instead of continuing into a silently half-scaffolded app
+# A fetch failure (a network blip, or `thecore` reorganizing `samples/`) aborts
+# the whole template with a clear, specific message instead of continuing into a silently half-scaffolded app
 # (some `.devcontainer/*` files present, others not, no clear signal pointing
 # back to the real cause) -- the same fail-fast philosophy thecore_generators#17
 # already applies to `bundle_command`/`rails_command` failures in the installer
