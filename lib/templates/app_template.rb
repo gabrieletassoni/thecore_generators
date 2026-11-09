@@ -79,6 +79,18 @@ create_file "vendor/external/.keep", <<~TEXT
   anything automatically.
 TEXT
 
+# --- No root Dockerfile ------------------------------------------------------
+# `rails new` (7.2) writes a Kamal-style root `Dockerfile` plus the
+# `bin/docker-entrypoint` it runs. The Thecore build script (`app-compile.sh` in
+# thecore_devcontainer) prefers a root `Dockerfile` whenever one exists, so keeping
+# Rails' one would make CI build the app with it instead of the Thecore Dockerfile
+# (`/etc/thecore/docker/Dockerfile`), which is what the pilot (mytask-imas) uses.
+# Removed here, not in the extension, so both "Create an App" and a bare
+# `rails new -m` get it. `.dockerignore` is left alone: the Thecore Dockerfile's
+# `ADD .` honours it.
+remove_file "Dockerfile"
+remove_file "bin/docker-entrypoint"
+
 # --- Devcontainer / CI / CLAUDE.md assets, from thecore's own samples -------
 # Single source of truth (ADR 0005) — not duplicated inside this gem. The base
 # location is resolved fresh inside `fetch_thecore_sample` on every call, through
@@ -108,7 +120,7 @@ TEXT
 # today.
 #
 # Every write below is unconditional (`force: true`, no interactive prompt).
-# Of the seven `.devcontainer/*` files, four (`devcontainer.json`,
+# Of the eight `.devcontainer/*` files, four (`devcontainer.json`,
 # `docker-compose.yml`, `Dockerfile`, `create-db-user.sql`) are expected to
 # already exist, written by the separate, prior "Setup Devcontainer" bootstrap
 # step this template runs inside of (verified directly against that command's
@@ -119,7 +131,9 @@ TEXT
 # for a new file and keeps every write in this block uniform. The seventh,
 # `heal-stale-containers.sh` (run by `initializeCommand`, ADR 0005 in
 # thecore_devcontainer), is written by that step only from the extension
-# release after 3.10.0, so it may be either.
+# release after 3.10.0, so it may be either. The eighth, `github-accounts.sh`
+# (run by `postCreateCommand`: one SSH key per GitHub account), is likewise new
+# unless a later extension release writes it too.
 # `.gitlab-ci.yml`/`CLAUDE.md` don't exist yet in the documented flow either,
 # but stay unconditional too so re-running this template later
 # (`bin/rails app:template`) is a clean overwrite, not a prompt.
@@ -146,16 +160,17 @@ rescue StandardError => e
 end
 
 %w[devcontainer.json docker-compose.yml Dockerfile create-db-user.sql link-host-home.sh check-plugins.sh
-   heal-stale-containers.sh].each do |file|
+   heal-stale-containers.sh github-accounts.sh].each do |file|
   fetch_thecore_sample("devcontainer/#{file}", ".devcontainer/#{file}")
 end
 # `get`/`create_file` only write content, never permissions — the executable bit
-# has to be restored explicitly for the three scripts (`thecore/samples/devcontainer/`
+# has to be restored explicitly for the four scripts (`thecore/samples/devcontainer/`
 # stores them executable, but that's lost the moment their bytes cross an HTTP
 # fetch or a plain `File.read`).
 chmod ".devcontainer/link-host-home.sh", 0o755
 chmod ".devcontainer/check-plugins.sh", 0o755
 chmod ".devcontainer/heal-stale-containers.sh", 0o755
+chmod ".devcontainer/github-accounts.sh", 0o755
 
 fetch_thecore_sample(".gitlab-ci.yml", ".gitlab-ci.yml")
 # thecore_generators#25 (ADR 0007): fetched unconditionally, alongside .gitlab-ci.yml above --
@@ -163,6 +178,13 @@ fetch_thecore_sample(".gitlab-ci.yml", ".gitlab-ci.yml")
 # dual-CI generation (git hosting is a generic, per-developer choice, not something to ask about).
 fetch_thecore_sample(".github/workflows/ci.yml", ".github/workflows/ci.yml")
 fetch_thecore_sample("CLAUDE.md", "CLAUDE.md")
+# thecore_devcontainer#13: the agent docs CLAUDE.md points to (issue tracker picked from the git
+# remote's host, triage labels, domain docs) and an AGENTS.md that only points to CLAUDE.md, so
+# agents other than Claude Code read the same single source.
+fetch_thecore_sample("AGENTS.md", "AGENTS.md")
+%w[issue-tracker.md triage-labels.md domain.md].each do |doc|
+  fetch_thecore_sample("docs/agents/#{doc}", "docs/agents/#{doc}")
+end
 
 # --- Test database rule (the pilot's, mytask-imas test/test_helper.rb) --------
 # The devcontainer sets one global DATABASE_URL pointing at the development

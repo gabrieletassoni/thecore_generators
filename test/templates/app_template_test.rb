@@ -92,14 +92,14 @@ class AppTemplateTest < Minitest::Test
       # coincidentally matched; equality can't.
       %w[
         devcontainer.json docker-compose.yml Dockerfile create-db-user.sql
-        link-host-home.sh check-plugins.sh heal-stale-containers.sh
+        link-host-home.sh check-plugins.sh heal-stale-containers.sh github-accounts.sh
       ].each do |file|
         destination = File.join(app_path, ".devcontainer", file)
         assert File.file?(destination), "expected .devcontainer/#{file} to be fetched from thecore's samples"
         assert_equal File.read(File.join(SAMPLES_FIXTURE_DIR, "devcontainer", file)), File.read(destination),
           "expected the fetched .devcontainer/#{file} to match the fixture byte-for-byte"
       end
-      %w[link-host-home.sh check-plugins.sh heal-stale-containers.sh].each do |script|
+      %w[link-host-home.sh check-plugins.sh heal-stale-containers.sh github-accounts.sh].each do |script|
         mode = File.stat(File.join(app_path, ".devcontainer", script)).mode
         assert (mode & 0o111).positive?, "expected .devcontainer/#{script} to be executable"
       end
@@ -114,7 +114,10 @@ class AppTemplateTest < Minitest::Test
           "expected the #{cli} CLI config mount to be present but commented out")
       end
 
-      %w[.gitlab-ci.yml .github/workflows/ci.yml CLAUDE.md].each do |file|
+      %w[
+        .gitlab-ci.yml .github/workflows/ci.yml CLAUDE.md AGENTS.md
+        docs/agents/issue-tracker.md docs/agents/triage-labels.md docs/agents/domain.md
+      ].each do |file|
         destination = File.join(app_path, file)
         assert File.file?(destination), "expected #{file} to be fetched from thecore's samples"
         assert_equal File.read(File.join(SAMPLES_FIXTURE_DIR, file)), File.read(destination),
@@ -146,6 +149,8 @@ class AppTemplateTest < Minitest::Test
       assert_devcontainer_practices(app_path)
       assert_test_database_practices(app_path)
       assert_ci_test_database_practices(app_path)
+      assert_agent_docs_practices(app_path)
+      assert_docker_build_practices(app_path)
     end
   end
 
@@ -237,19 +242,157 @@ class AppTemplateTest < Minitest::Test
   end
 
   # The pilot's devcontainer practices: stale containers healed on the host before
-  # compose starts, the host home aliased for Claude Code's plugin paths, and the
-  # plugin check -- each a script the container can run, wired where the pilot wires it.
+  # compose starts, the host home aliased for Claude Code's plugin paths, one SSH key
+  # per GitHub account, and the plugin check -- each a script the container can run,
+  # wired where the pilot wires it.
   def assert_devcontainer_practices(app_path)
-    %w[heal-stale-containers.sh link-host-home.sh check-plugins.sh].each do |script|
+    %w[heal-stale-containers.sh link-host-home.sh github-accounts.sh check-plugins.sh].each do |script|
       path = File.join(app_path, ".devcontainer", script)
       assert File.file?(path), "expected .devcontainer/#{script} in the generated app"
       assert File.executable?(path), "expected .devcontainer/#{script} to be executable"
     end
 
     devcontainer = parse_jsonc(File.read(File.join(app_path, ".devcontainer", "devcontainer.json")))
-    assert_match(%r{\Abash \.devcontainer/heal-stale-containers\.sh '\$\{localWorkspaceFolder\}'\z},
-      devcontainer["initializeCommand"].to_s,
-      "expected initializeCommand to run the heal script on the workspace folder")
+    post_create = devcontainer["postCreateCommand"].to_s.split("&&").map(&:strip)
+    assert_includes post_create, "bash .devcontainer/github-accounts.sh",
+      "expected postCreateCommand to run the multi-GitHub-account script"
+
+    assert_host_paths_created_before_heal(devcontainer)
+  end
+
+  HEAL_CALL = "bash .devcontainer/heal-stale-containers.sh '${localWorkspaceFolder}'"
+
+  # Every active bind mount must have its host path created by initializeCommand (on the
+  # host, before `docker compose up`), or a fresh machine can't start the container: a
+  # missing directory fails the mount, a missing file becomes a directory. The heal call
+  # comes last. Checked by running the part before the heal call against an empty HOME
+  # (the ~/.claude.json mount is a file, the others directories), then against a HOME
+  # whose ~/.claude.json already has content, which must survive.
+  def assert_host_paths_created_before_heal(devcontainer)
+    command = devcontainer["initializeCommand"].to_s
+    assert command.end_with?(HEAL_CALL),
+      "expected initializeCommand to end by running the heal script on the workspace folder, got: #{command}"
+    setup = command.delete_suffix(HEAL_CALL).strip.delete_suffix("&&").strip
+
+    sources = Array(devcontainer["mounts"]).filter_map do |mount|
+      mount[/(?:\A|,)source=([^,]+)/, 1] if mount.include?("type=bind")
+    end
+    assert_includes sources, "${localEnv:HOME}/.claude.json", "expected the ~/.claude.json mount to be active"
+    assert_includes sources, "${localEnv:HOME}/.claude", "expected the ~/.claude mount to be active"
+
+    Dir.mktmpdir do |home|
+      run_with_home = lambda do
+        _out, err, status = Open3.capture3("bash", "-c", setup.gsub("${localEnv:HOME}", home))
+        assert status.success?, "initializeCommand's host-path setup failed: #{err}"
+      end
+
+      run_with_home.call
+      sources.each do |source|
+        path = source.gsub("${localEnv:HOME}", home)
+        if source.end_with?(".json")
+          assert File.file?(path), "expected initializeCommand to create the mounted file #{source}"
+        else
+          assert File.directory?(path), "expected initializeCommand to create the mounted directory #{source}"
+        end
+      end
+
+      claude_json = File.join(home, ".claude.json")
+      File.write(claude_json, %({"kept":true}))
+      run_with_home.call
+      assert_equal %({"kept":true}), File.read(claude_json), "expected an existing ~/.claude.json to be left untouched"
+    end
+  end
+
+  # The pilot has no root Dockerfile: the Thecore build script (`app-compile.sh` in
+  # thecore_devcontainer) prefers a root `Dockerfile` when one exists, so the Kamal-style
+  # one `rails new` 7.2 generates (and the entrypoint script it runs) must not survive,
+  # or CI would build the app with it instead of the Thecore Dockerfile.
+  def assert_docker_build_practices(app_path)
+    refute File.exist?(File.join(app_path, "Dockerfile")),
+      "expected no root Dockerfile, so the Thecore build script uses the Thecore Dockerfile"
+    refute File.exist?(File.join(app_path, "bin", "docker-entrypoint")),
+      "expected no bin/docker-entrypoint (only the removed Rails Dockerfile runs it)"
+  end
+
+  AGENT_DOCS = %w[issue-tracker.md triage-labels.md domain.md].freeze
+  TRIAGE_LABELS = %w[needs-triage needs-info ready-for-agent ready-for-human wontfix].freeze
+  # Customer-specific practices of the pilot that must never reach a generic app.
+  CUSTOMER_SPECIFIC = /Odoo|Odooly|VPN|MS ?SQL|SQL Server|tiny_?tds|IMAS|Gamma|Bancolini/i
+
+  # The pilot's agent docs (thecore_devcontainer#13): docs/agents/ telling skills where
+  # tickets go, an AGENTS.md that only points to CLAUDE.md, and a CLAUDE.md stating the
+  # rules the pilot learned -- with none of the pilot's customer-specific content.
+  def assert_agent_docs_practices(app_path)
+    AGENT_DOCS.each do |doc|
+      assert File.file?(File.join(app_path, "docs", "agents", doc)), "expected docs/agents/#{doc} in the generated app"
+    end
+
+    tracker = File.read(File.join(app_path, "docs", "agents", "issue-tracker.md"))
+    assert_match(/git remote get-url origin/, tracker, "expected the issue tracker to be chosen from the git remote")
+    assert_match(/GitHub Issues/, tracker, "expected GitHub Issues as the tracker for a github.com remote")
+    assert_match(/GitLab Issues/, tracker, "expected GitLab Issues as the tracker for a GitLab remote")
+    assert_match(/`gh issue create/, tracker, "expected the gh commands for GitHub Issues")
+    assert_match(/`glab issue create/, tracker, "expected the glab commands for GitLab Issues")
+
+    labels = File.read(File.join(app_path, "docs", "agents", "triage-labels.md"))
+    TRIAGE_LABELS.each { |label| assert_includes labels, "`#{label}`", "expected the #{label} triage label" }
+
+    agents_md_path = File.join(app_path, "AGENTS.md")
+    assert File.file?(agents_md_path), "expected AGENTS.md in the generated app"
+    agents_md = File.read(agents_md_path)
+    assert_match(/CLAUDE\.md/, agents_md, "expected AGENTS.md to point to CLAUDE.md")
+    assert_operator agents_md.lines.count { |l| !l.strip.empty? }, :<=, 10,
+      "expected AGENTS.md to only point to CLAUDE.md, not duplicate it"
+
+    claude_md = File.read(File.join(app_path, "CLAUDE.md"))
+    atom = markdown_section(claude_md, "## Changing an ATOM")
+    ["vendor/submodules/", "git submodule add -b release/3", "release/3", "--conservative", "Gemfile.lock"].each do |step|
+      assert_includes atom, step, "expected \"Changing an ATOM\" to cover #{step}"
+    end
+
+    skills = markdown_section(claude_md, "## Agent skills")
+    %w[issue-tracker triage-labels domain].each do |doc|
+      assert_includes skills, "docs/agents/#{doc}.md", "expected \"Agent skills\" to point to docs/agents/#{doc}.md"
+    end
+
+    conventions = markdown_section(claude_md, "## Code conventions")
+    assert_match(/retr(y|ied)/i, conventions, "expected the no-job-retries rule")
+    assert_match(/serializable/i, conventions, "expected the serializable job arguments rule")
+    assert_match(/Base64/, conventions, "expected the Base64-for-binary job arguments rule")
+    assert_match(/Arel\.sql/, conventions, "expected the Arel.sql rule")
+    assert_match(/ThecoreSettings::Setting\.find_by/, conventions, "expected the settings-read-at-runtime rule")
+    assert_match(%r{vendor/deploytargets/.*SECRET_KEY_BASE|SECRET_KEY_BASE.*vendor/deploytargets/}m, claude_md,
+      "expected the no-secrets-in-vendor/deploytargets/ rule")
+
+    plugin = markdown_section(claude_md, "## Claude Code skills")
+    assert_match(/User-invoked only/, plugin, "expected the user-invoked skills listed")
+    assert_match(/Model-invocable/, plugin, "expected the model-invocable skills listed")
+
+    commands = markdown_section(claude_md, "## Common commands")
+    assert_includes commands, "thecore:atom", "expected thecore:atom among the common commands"
+    assert_includes commands, "thecore:collection_action", "expected thecore:collection_action among the common commands"
+
+    (["CLAUDE.md", "AGENTS.md"] + AGENT_DOCS.map { |d| "docs/agents/#{d}" }).each do |file|
+      refute_match CUSTOMER_SPECIFIC, File.read(File.join(app_path, file)), "#{file} carries customer-specific content"
+    end
+  end
+
+  # The text under a Markdown heading, up to the next heading of the same or higher level
+  # (a `#` line inside a fenced code block is a shell comment, not a heading).
+  def markdown_section(text, heading)
+    level = heading[/\A#+/].size
+    lines = text.lines
+    start = lines.index { |l| l.chomp == heading }
+    assert start, "expected a \"#{heading}\" section"
+    in_fence = false
+    section = [lines[start]]
+    lines[(start + 1)..].each do |line|
+      in_fence = !in_fence if line.start_with?("```")
+      break if !in_fence && line.match?(/\A\#{1,#{level}} /)
+
+      section << line
+    end
+    section.join
   end
 
   # The pilot's test-database rule (mytask-imas test/test_helper.rb): the devcontainer's

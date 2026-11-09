@@ -235,12 +235,45 @@ module Thecore
       # is Shellwords-escaped even though #validate_atom_name! already restricts it
       # to a shell-safe character set - defense in depth, matching the same care
       # #git_init_and_commit already takes with the free-text @author/@email.
+      #
+      # Two flags go beyond createATOM.js (thecore_devcontainer#15): `--database=postgresql`,
+      # because PostgreSQL is the only database Thecore targets and an ATOM's
+      # Postgres-specific code must be tested on it (the default dummy app is SQLite); and
+      # `--skip-ci`, because Thecore writes its own CI (#create_ci_files) and a second,
+      # SQLite-based GitHub workflow plus dependabot.yml would be a pipeline nobody maintains.
       def create_rails_engine
         inside("vendor/submodules") do
           run("bundle exec rails plugin new #{Shellwords.escape(file_name)} " \
-                "-fG --skip-gemfile-entry --skip-hotwire --full",
+                "-fG --skip-gemfile-entry --skip-hotwire --full --database=postgresql --skip-ci",
             abort_on_failure: true)
         end
+      end
+
+      # The dummy app's database.yml, the pilot ATOM's (mytask) shape: the server comes from
+      # the PG* variables (defaulting to the devcontainer's `db` service), the database names
+      # are the ATOM's own. Rails' postgresql template names them `dummy_*` and sets no host.
+      def configure_dummy_database
+        create_file File.join(atom_root, "test/dummy/config/database.yml"), dummy_database_yml, force: true
+      end
+
+      # The test-database rule. The devcontainer exports a global DATABASE_URL pointing at the
+      # host app's development database, and DATABASE_URL wins over database.yml: without
+      # this, the dummy app's schema load (force: :cascade) or db:test:prepare (drop + create)
+      # would wipe the host app's development data. It lives in the dummy's boot.rb, not in
+      # test/test_helper.rb, so every entry point is covered (the test helper, which sets
+      # RAILS_ENV=test before booting, bin/rails db:*, the db:test:prepare subprocess Rails
+      # spawns for a pending schema) - same place as in the pilot's own ATOMs.
+      def force_atom_database_under_database_url
+        append_to_file File.join(atom_root, "test/dummy/config/boot.rb"), <<~RUBY
+
+          # PostgreSQL is the only database target. DATABASE_URL overrides database.yml, and the
+          # devcontainer points it at the host app's development database, which this dummy app's
+          # schema load or db:test:prepare would clobber. Keep DATABASE_URL's server/credentials,
+          # but always use this ATOM's own per-environment database (#{file_name}_test for tests).
+          if ENV["DATABASE_URL"].to_s.start_with?("postgres")
+            ENV["DATABASE_URL"] = ENV["DATABASE_URL"].sub(%r{/[^/?]*(?=\\?|\\z)}, "/#{file_name}_\#{ENV.fetch("RAILS_ENV", "development")}")
+          end
+        RUBY
       end
 
       # #create_file already `mkdir_p`s its own parent directory, so a separate
@@ -293,10 +326,15 @@ module Thecore
       end
 
       def setup_gemfile
-        gemfile_addition = +"\ngem 'pg'\n"
+        # `rails plugin new --database=postgresql` already declares pg; add it only if a
+        # future Rails template stops doing so (Bundler rejects a gem declared twice).
+        gemfile_path = File.join(atom_root, "Gemfile")
+        has_pg = File.read(File.join(destination_root, gemfile_path)).match?(/^\s*gem\s+["']pg["']/)
+        gemfile_addition = +"\n"
+        gemfile_addition << "gem 'pg'\n" unless has_pg
         gemfile_addition << "gem 'model_driven_api', '#{MODEL_DRIVEN_API_VERSION}'\n" \
           "gem 'thecore_ui_rails_admin', '#{THECORE_UI_RAILS_ADMIN_VERSION}'\n" if @include_api_admin_deps
-        append_to_file File.join(atom_root, "Gemfile"), gemfile_addition
+        append_to_file gemfile_path, gemfile_addition unless gemfile_addition.strip.empty?
 
         return unless @include_api_admin_deps
 
@@ -409,7 +447,13 @@ module Thecore
             #{file_name} is git-initialized locally with one commit, but has no remote yet. To finish wiring it in:
               1. Create a repository for it on the git host of your choice (GitHub, GitLab, ...)
               2. cd #{atom_path} && git remote add origin <remote-url> && git push -u origin master
-              3. From this app's root: git submodule add <remote-url> vendor/submodules/#{file_name}
+              3. From this app's root: git submodule add -b release/3 <remote-url> vendor/submodules/#{file_name}
+            Until the gem is published, this app's Gemfile uses it from the submodule:
+              gem "#{file_name}", path: "vendor/submodules/#{file_name}"
+            Once published (bump lib/#{file_name}/version.rb and push to release/3; the CI publishes it), switch to the published gem:
+              4. Replace that line with gem "#{file_name}", "~> <major.minor>" (inside the `source "https://<gem-host>/" do` block if it's on a private gem server)
+              5. bundle update #{file_name} --conservative, then commit Gemfile.lock together with the submodule pointer
+            From then on every change follows the same loop: edit and test in vendor/submodules/#{file_name}, bump the version, push to release/3, wait for the gem server, bundle update #{file_name} --conservative, commit Gemfile.lock + the submodule pointer.
           MSG
         else
           say_status :warning, <<~MSG.strip, :red
@@ -445,6 +489,34 @@ module Thecore
 
       def atom_root
         File.join("vendor", "submodules", file_name)
+      end
+
+      def dummy_database_yml
+        <<~YAML
+          # PostgreSQL only: Thecore targets PostgreSQL exclusively, so this dummy app does too
+          # (never SQLite). When DATABASE_URL is set (e.g. in the devcontainer), config/boot.rb
+          # keeps only its server/credentials and forces #{file_name}_<RAILS_ENV> as the database.
+          default: &default
+            adapter: postgresql
+            encoding: unicode
+            host: <%= ENV.fetch("PGHOST", "db") %>
+            port: <%= ENV.fetch("PGPORT", 5432) %>
+            username: <%= ENV.fetch("PGUSER", "postgres") %>
+            password: <%= ENV.fetch("PGPASSWORD", "postgres") %>
+            pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+
+          development:
+            <<: *default
+            database: #{file_name}_development
+
+          test:
+            <<: *default
+            database: #{file_name}_test
+
+          production:
+            <<: *default
+            database: #{file_name}_production
+        YAML
       end
 
       # True whenever prompting for input isn't viable: --non-interactive was
