@@ -90,14 +90,14 @@ class AppTemplateTest < Minitest::Test
       # coincidentally matched; equality can't.
       %w[
         devcontainer.json docker-compose.yml Dockerfile create-db-user.sql
-        link-host-home.sh check-plugins.sh heal-stale-containers.sh
+        link-host-home.sh check-plugins.sh heal-stale-containers.sh github-accounts.sh
       ].each do |file|
         destination = File.join(app_path, ".devcontainer", file)
         assert File.file?(destination), "expected .devcontainer/#{file} to be fetched from thecore's samples"
         assert_equal File.read(File.join(SAMPLES_FIXTURE_DIR, "devcontainer", file)), File.read(destination),
           "expected the fetched .devcontainer/#{file} to match the fixture byte-for-byte"
       end
-      %w[link-host-home.sh check-plugins.sh heal-stale-containers.sh].each do |script|
+      %w[link-host-home.sh check-plugins.sh heal-stale-containers.sh github-accounts.sh].each do |script|
         mode = File.stat(File.join(app_path, ".devcontainer", script)).mode
         assert (mode & 0o111).positive?, "expected .devcontainer/#{script} to be executable"
       end
@@ -146,6 +146,7 @@ class AppTemplateTest < Minitest::Test
 
       assert_devcontainer_practices(app_path)
       assert_agent_docs_practices(app_path)
+      assert_docker_build_practices(app_path)
     end
   end
 
@@ -237,19 +238,76 @@ class AppTemplateTest < Minitest::Test
   end
 
   # The pilot's devcontainer practices: stale containers healed on the host before
-  # compose starts, the host home aliased for Claude Code's plugin paths, and the
-  # plugin check -- each a script the container can run, wired where the pilot wires it.
+  # compose starts, the host home aliased for Claude Code's plugin paths, one SSH key
+  # per GitHub account, and the plugin check -- each a script the container can run,
+  # wired where the pilot wires it.
   def assert_devcontainer_practices(app_path)
-    %w[heal-stale-containers.sh link-host-home.sh check-plugins.sh].each do |script|
+    %w[heal-stale-containers.sh link-host-home.sh github-accounts.sh check-plugins.sh].each do |script|
       path = File.join(app_path, ".devcontainer", script)
       assert File.file?(path), "expected .devcontainer/#{script} in the generated app"
       assert File.executable?(path), "expected .devcontainer/#{script} to be executable"
     end
 
     devcontainer = parse_jsonc(File.read(File.join(app_path, ".devcontainer", "devcontainer.json")))
-    assert_match(%r{\Abash \.devcontainer/heal-stale-containers\.sh '\$\{localWorkspaceFolder\}'\z},
-      devcontainer["initializeCommand"].to_s,
-      "expected initializeCommand to run the heal script on the workspace folder")
+    post_create = devcontainer["postCreateCommand"].to_s.split("&&").map(&:strip)
+    assert_includes post_create, "bash .devcontainer/github-accounts.sh",
+      "expected postCreateCommand to run the multi-GitHub-account script"
+
+    assert_host_paths_created_before_heal(devcontainer)
+  end
+
+  HEAL_CALL = "bash .devcontainer/heal-stale-containers.sh '${localWorkspaceFolder}'"
+
+  # Every active bind mount must have its host path created by initializeCommand (on the
+  # host, before `docker compose up`), or a fresh machine can't start the container: a
+  # missing directory fails the mount, a missing file becomes a directory. The heal call
+  # comes last. Checked by running the part before the heal call against an empty HOME
+  # (the ~/.claude.json mount is a file, the others directories), then against a HOME
+  # whose ~/.claude.json already has content, which must survive.
+  def assert_host_paths_created_before_heal(devcontainer)
+    command = devcontainer["initializeCommand"].to_s
+    assert command.end_with?(HEAL_CALL),
+      "expected initializeCommand to end by running the heal script on the workspace folder, got: #{command}"
+    setup = command.delete_suffix(HEAL_CALL).strip.delete_suffix("&&").strip
+
+    sources = Array(devcontainer["mounts"]).filter_map do |mount|
+      mount[/(?:\A|,)source=([^,]+)/, 1] if mount.include?("type=bind")
+    end
+    assert_includes sources, "${localEnv:HOME}/.claude.json", "expected the ~/.claude.json mount to be active"
+    assert_includes sources, "${localEnv:HOME}/.claude", "expected the ~/.claude mount to be active"
+
+    Dir.mktmpdir do |home|
+      run_with_home = lambda do
+        _out, err, status = Open3.capture3("bash", "-c", setup.gsub("${localEnv:HOME}", home))
+        assert status.success?, "initializeCommand's host-path setup failed: #{err}"
+      end
+
+      run_with_home.call
+      sources.each do |source|
+        path = source.gsub("${localEnv:HOME}", home)
+        if source.end_with?(".json")
+          assert File.file?(path), "expected initializeCommand to create the mounted file #{source}"
+        else
+          assert File.directory?(path), "expected initializeCommand to create the mounted directory #{source}"
+        end
+      end
+
+      claude_json = File.join(home, ".claude.json")
+      File.write(claude_json, %({"kept":true}))
+      run_with_home.call
+      assert_equal %({"kept":true}), File.read(claude_json), "expected an existing ~/.claude.json to be left untouched"
+    end
+  end
+
+  # The pilot has no root Dockerfile: the Thecore build script (`app-compile.sh` in
+  # thecore_devcontainer) prefers a root `Dockerfile` when one exists, so the Kamal-style
+  # one `rails new` 7.2 generates (and the entrypoint script it runs) must not survive,
+  # or CI would build the app with it instead of the Thecore Dockerfile.
+  def assert_docker_build_practices(app_path)
+    refute File.exist?(File.join(app_path, "Dockerfile")),
+      "expected no root Dockerfile, so the Thecore build script uses the Thecore Dockerfile"
+    refute File.exist?(File.join(app_path, "bin", "docker-entrypoint")),
+      "expected no bin/docker-entrypoint (only the removed Rails Dockerfile runs it)"
   end
 
   AGENT_DOCS = %w[issue-tracker.md triage-labels.md domain.md].freeze
