@@ -1,5 +1,11 @@
 ## Unreleased
 
+- The App application template also fetches `samples/AGENTS.md` and
+  `samples/docs/agents/{issue-tracker,triage-labels,domain}.md` (thecore_devcontainer#13): a new
+  app's agents find the tracker (GitHub Issues or GitLab Issues, picked from the git remote), the
+  five triage labels and the domain-docs layout without `/setup-matt-pocock-skills`, and agents
+  other than Claude Code are pointed to `CLAUDE.md`. The real-samples test asserts them and
+  `CLAUDE.md`'s required sections. Needs the matching `thecore` master, which carries the files.
 - The App application template also fetches `samples/devcontainer/github-accounts.sh` and makes it
   executable. `postCreateCommand` runs it: it makes git use the right forwarded SSH key for each
   GitHub account's remotes, so a developer with several accounts can push to all of them. The
@@ -35,6 +41,14 @@
   when `THECORE_REAL_SAMPLES_DIR` names its `samples/` directory (skipped when unset), and asserts
   the generated app's heal, host-home and plugin-check scripts and `initializeCommand`
   (thecore_devcontainer#6). Test-only, no change to the generated app.
+
+- The App template patches the generated `test/test_helper.rb` with the test-database rule: when
+  `DATABASE_URL` is set, the test run uses `<app>_test` on the same server, so `rails test` in the
+  devcontainer (whose `DATABASE_URL` names the development database) never touches development
+  data. Unlike the pilot's regex, it also handles a URL naming only the server, which the CI
+  samples use. The real-samples test also asserts both CI samples' test jobs: a Postgres
+  service, `RAILS_ENV=test`, a server-only `DATABASE_URL`, and `db:test:prepare` before
+  `rails test` (thecore_devcontainer#8). Needs the matching `thecore` master.
 
 ## 3.13.0
 

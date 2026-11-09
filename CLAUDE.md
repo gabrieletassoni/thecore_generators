@@ -775,6 +775,18 @@ criterion honestly: a developer bootstrapping without network access can decline
 `bundle install && rails generate devise:install && ...` by hand once they have connectivity, and
 the Gemfile/vendor-directory content is written either way, regardless of the answer.
 
+**Test-database rule (thecore_devcontainer#8)**: after the samples fetch, the template inserts a
+block into the generated `test/test_helper.rb`, right after `ENV["RAILS_ENV"] ||= "test"`. When
+`DATABASE_URL` is set, the block replaces the database it names with `<app>_test` (`app_name` is
+interpolated at generation time), parsing the URL with `URI` so a URL naming only the server gets
+a database too. This is the pilot's rule (mytask-imas `test/test_helper.rb`), except the pilot uses
+a regex on the path, which mangles a server-only URL. The CI samples use that form so that
+`db:test:prepare` takes `database.yml`'s test name. The insert is skipped when `rails new
+--skip-test` produced no helper. The real-samples test (S1) checks the behaviour, not the text: it
+loads the generated helper with `require_relative` stubbed and reads `DATABASE_URL` at the point
+where `config/environment` would load. `require "uri"` is preloaded there, because `uri` itself
+calls `require_relative`.
+
 **Non-interactive mode (thecore_generators#23)**: `ENV["THECORE_APP_TEMPLATE_NON_INTERACTIVE"]`
 (any non-blank value — same `nil?`/`empty?` blank-safety idiom as `THECORE_SAMPLES_SOURCE` above,
 not a bare truthiness check) bypasses the `yes?` prompt entirely. When set, a second var,
@@ -852,7 +864,8 @@ what tells Bundler which bundle's `rails` to resolve.
 `docker-compose.yml`, `Dockerfile`, `create-db-user.sql`, `link-host-home.sh`,
 `check-plugins.sh`, `heal-stale-containers.sh`), **both** `.gitlab-ci.yml` and `.github/workflows/ci.yml` (ADR 0007 —
 same git-hosting-agnostic reasoning ADR 0006 already established for `thecore:atom`'s own dual-CI
-generation, no hosting-profile prompt), and `CLAUDE.md` are all fetched via a
+generation, no hosting-profile prompt), `CLAUDE.md`, `AGENTS.md` and `docs/agents/`
+(`issue-tracker.md`, `triage-labels.md`, `domain.md`; thecore_devcontainer#13) are all fetched via a
 `fetch_thecore_sample(relative_path, destination)` helper
 defined inline in the template (a `def` inside a `rails new -m` template's `instance_eval`d
 content becomes a singleton method on the `AppGenerator` instance being evaluated against — safe
@@ -929,7 +942,10 @@ this time from a local checkout of `thecore`'s **real** `samples/`, and asserts 
 practices a developer gets from the pilot (mytask-imas): today the heal, host-home and
 plugin-check scripts in `.devcontainer/`, executable, and `initializeCommand` running the heal
 script on `${localWorkspaceFolder}` (`devcontainer.json` is parsed as JSONC); no root `Dockerfile`
-and no `bin/docker-entrypoint`. The fixture run
+and no `bin/docker-entrypoint`; the agent docs (`assert_agent_docs_practices`: `docs/agents/` with
+the tracker picked from the git remote and the five triage labels, an `AGENTS.md` that only points
+to `CLAUDE.md`, and `CLAUDE.md`'s required sections, checked section by section with
+`markdown_section`, and no customer-specific content). The fixture run
 above keeps proving the fetch mechanism; this one catches drift between samples and template.
 Each area has its own `assert_*_practices(app_path)` helper called from that one method, so a
 later ticket adds a helper and a call there, and `rails new` still runs once.

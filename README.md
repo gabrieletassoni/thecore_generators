@@ -405,10 +405,15 @@ for the full design and why the two stay separate).
   `.github/workflows/ci.yml` (build/test/lint/deploy, no customer-specific paths — no hosting-
   profile prompt, same git-hosting-agnostic reasoning ADR 0006 established for `thecore:atom`'s
   own dual-CI generation, extended here by ADR 0007/thecore_generators#25), and `CLAUDE.md`
-  (universal sections only, project-specific sections left as TODO placeholders). The fetch
+  (universal sections only, project-specific sections left as TODO placeholders), plus
+  `AGENTS.md` (points to `CLAUDE.md`) and `docs/agents/` (issue tracker picked from the git
+  remote's host, GitHub or GitLab Issues; triage labels; domain docs). The fetch
   location is one overridable point,
   `ENV["THECORE_SAMPLES_SOURCE"]`, defaulting to the raw GitHub URL for `thecore`'s `samples/`
   on `master` (`thecore`'s actual default branch).
+- **Test-database rule** — the generated `test/test_helper.rb` replaces whatever database
+  `DATABASE_URL` names with `<app>_test` before the app boots. The devcontainer's `DATABASE_URL`
+  points at development, so running tests never touches development data.
 - **No root `Dockerfile`** — the `Dockerfile` and `bin/docker-entrypoint` that `rails new` 7.2
   generates are removed, so the Thecore build script (`app-compile.sh` in `thecore_devcontainer`)
   builds the app with the Thecore Dockerfile instead of Rails' own. `.dockerignore` is kept.
