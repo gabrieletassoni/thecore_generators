@@ -2,6 +2,7 @@ require "test_helper"
 require "generators/thecore/atom/atom_generator"
 require "fileutils"
 require "tmpdir"
+require "open3"
 
 class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
   tests Thecore::Generators::AtomGenerator
@@ -82,9 +83,44 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
   end
 
   test "generates a complete ATOM end-to-end with default (included) API/Admin dependencies" do
-    run_generator ["tcp_debugger"] + NON_INTERACTIVE_ARGS
+    output = run_generator ["tcp_debugger"] + NON_INTERACTIVE_ARGS
 
     atom = "vendor/submodules/tcp_debugger"
+
+    # The dummy app runs on PostgreSQL, the only database Thecore targets (never SQLite).
+    assert_file "#{atom}/test/dummy/config/database.yml" do |content|
+      config = YAML.safe_load(content, aliases: true)
+      %w[development test production].each do |env|
+        assert_equal "postgresql", config[env]["adapter"], "#{env} should use PostgreSQL"
+        assert_equal "tcp_debugger_#{env}", config[env]["database"]
+      end
+    end
+    assert_file "#{atom}/Gemfile" do |content|
+      refute_match(/sqlite3/, content)
+      assert_equal 1, content.scan(/^\s*gem\s+["']pg["']/).size, "pg should be declared exactly once"
+    end
+
+    # The test-database rule: under the devcontainer's global DATABASE_URL (pointing at the
+    # host app's development database), a test run keeps the server/credentials but always
+    # uses the ATOM's own test database, so running the tests never touches development data.
+    assert_equal "postgres://postgres:postgres@db:5432/tcp_debugger_test?sslmode=disable",
+      database_url_seen_by_dummy_boot(atom, "postgres://postgres:postgres@db:5432/myapp_development?sslmode=disable")
+    assert_file "#{atom}/test/test_helper.rb" do |content|
+      assert_operator content.index('ENV["RAILS_ENV"] = "test"'), :<,
+        content.index("require_relative \"../test/dummy/config/environment\""),
+        "the test helper must set RAILS_ENV=test before booting the dummy app"
+    end
+
+    # Only Thecore's CI: none of the workflow/dependabot files `rails plugin new` adds by itself.
+    workflows = Dir.children(File.join(destination_root, atom, ".github/workflows")) - [".keep"]
+    assert_equal ["gempush.yml"], workflows
+    assert_no_file "#{atom}/.github/dependabot.yml"
+    assert_file "#{atom}/.gitlab-ci.yml"
+
+    # Next steps follow the pilot's "Changing an ATOM" workflow.
+    assert_includes output, "git submodule add -b release/3 <remote-url> vendor/submodules/tcp_debugger"
+    assert_includes output, 'gem "tcp_debugger", path: "vendor/submodules/tcp_debugger"'
+    assert_includes output, "bundle update tcp_debugger --conservative"
 
     assert_file "#{atom}/lib/tcp_debugger/engine.rb"
     assert_file "#{atom}/tcp_debugger.gemspec" do |content|
@@ -102,7 +138,7 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     end
 
     assert_file "#{atom}/Gemfile" do |content|
-      assert_match(/gem 'pg'/, content)
+      assert_match(/^gem ["']pg["']/, content)
       assert_match(/gem 'model_driven_api', '~> 3\.9'/, content)
       assert_match(/gem 'thecore_ui_rails_admin', '~> 3\.8'/, content)
     end
@@ -167,7 +203,7 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     atom = "vendor/submodules/tcp_debugger"
 
     assert_file "#{atom}/Gemfile" do |content|
-      assert_match(/gem 'pg'/, content)
+      assert_match(/^gem ["']pg["']/, content)
       refute_match(/model_driven_api/, content)
       refute_match(/thecore_ui_rails_admin/, content)
     end
@@ -228,6 +264,24 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
 
   def restore_samples_source!
     ENV["THECORE_SAMPLES_SOURCE"] = @original_samples_source
+  end
+
+  # Runs the generated dummy app's config/boot.rb in a clean Ruby process, as the test
+  # helper does (RAILS_ENV=test), and returns the DATABASE_URL it ends up with. Bundler is
+  # kept out of it (no outer bundle, a missing BUNDLE_GEMFILE) since the ATOM's own gems
+  # aren't installed here; boot.rb skips `bundler/setup` when its Gemfile is absent.
+  def database_url_seen_by_dummy_boot(atom, database_url)
+    boot = File.join(destination_root, atom, "test/dummy/config/boot.rb")
+    env = {
+      "RAILS_ENV" => "test",
+      "DATABASE_URL" => database_url,
+      "BUNDLE_GEMFILE" => File.join(Dir.tmpdir, "thecore_generators_no_such_gemfile"),
+    }
+    stdout, stderr, status = Bundler.with_unbundled_env do
+      Open3.capture3(env, "ruby", "-e", "load #{boot.dump}; print ENV['DATABASE_URL']")
+    end
+    assert status.success?, "loading #{boot} failed:\n#{stderr}"
+    stdout
   end
 
   def create_host_gemfile!

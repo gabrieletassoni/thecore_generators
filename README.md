@@ -240,9 +240,17 @@ silently overwrite an existing ATOM with the same name.
 It prompts (interactively, or via `--summary=`/`--description=`/`--author=`/`--email=`/`--url=`
 with `--non-interactive`) for the same five fields `createATOM.js` always has, then:
 
-- Shells to `rails plugin new <path> -fG --skip-gemfile-entry --skip-hotwire --full` (via
-  `bundle exec`, for robust gem resolution regardless of environment), producing the standard
-  Rails engine skeleton.
+- Shells to `rails plugin new <path> -fG --skip-gemfile-entry --skip-hotwire --full
+  --database=postgresql --skip-ci` (via `bundle exec`, for robust gem resolution regardless of
+  environment), producing the standard Rails engine skeleton. The dummy app runs on PostgreSQL
+  (never SQLite): its `database.yml` takes the server from `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`
+  (default: the devcontainer's `db`) and uses `<name>_development`/`_test`/`_production`. Its
+  `config/boot.rb` applies the test-database rule: when `DATABASE_URL` is set (the devcontainer
+  points it at the host app's development database), it keeps the server/credentials but always
+  uses `<name>_<RAILS_ENV>`, so running the ATOM's tests (the test helper sets `RAILS_ENV=test`)
+  never touches development data. `--skip-ci` drops the SQLite-based `.github/workflows/ci.yml`
+  and `.github/dependabot.yml` `rails plugin new` writes by itself: the only CI is Thecore's own
+  (below).
 - Asks (`yes?`-style, default yes; `--skip-api-admin-deps` in non-interactive mode) whether to
   add `model_driven_api`/`thecore_ui_rails_admin` as dependencies — at this gem's own ADR 0001
   floor (`~> 3.9`/`~> 3.8`), not `createATOM.js`'s stale `~> 3.1`/`~> 3.2`. Declining adds
@@ -266,8 +274,10 @@ with `--non-interactive`) for the same five fields `createATOM.js` always has, t
   gem's own `rails` dependency when adding the two Thecore ones; this appends instead of
   replacing).
 - `git init`s the new ATOM directory with one initial commit, then **logs** (never runs) the
-  exact follow-up commands to create a remote and `git submodule add` it into the host app —
-  worded generically, no GitHub/GitLab assumption (ADR 0006: automating a remote-repo-creating,
+  exact follow-up commands to create a remote and `git submodule add -b release/3` it into the
+  host app, followed by the "Changing an ATOM" workflow: how to move the host `Gemfile` from the
+  `path:` entry to the published gem (`bundle update <name> --conservative`, then commit
+  `Gemfile.lock` with the submodule pointer) — worded generically, no GitHub/GitLab assumption (ADR 0006: automating a remote-repo-creating,
   credential-dependent step isn't something this generator does on your behalf).
 - Adds `gem "<name>", path: "vendor/submodules/<name>"` to the host app's own `Gemfile` (via
   Thor's own `gem` action) — skipped, with a warning, if the Gemfile already declares a gem with

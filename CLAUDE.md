@@ -376,6 +376,22 @@ under that app's own Gemfile either way (`vendor/submodules` is a subdirectory o
 land on the same place) — but it makes gem resolution explicit rather than incidental, and it's
 what makes the generator's own test suite tractable at all (see below).
 
+**The dummy app is on PostgreSQL, and only Thecore's CI exists** (thecore_devcontainer#15) —
+`create_rails_engine` also passes `--database=postgresql` and `--skip-ci`. `--skip-ci` drops the
+`.github/workflows/ci.yml` (SQLite, `main` branch) and `.github/dependabot.yml` Rails writes by
+itself, so `gempush.yml`/`.gitlab-ci.yml` (`create_ci_files`) are the ATOM's only pipelines.
+`configure_dummy_database` replaces Rails' postgresql `database.yml` (named `dummy_*`, no host)
+with the pilot ATOM's (`mytask`) shape: server from `PG*` env vars defaulting to `db`, databases
+`<name>_<env>`. `force_atom_database_under_database_url` appends the test-database rule to the
+dummy's `config/boot.rb`: when `DATABASE_URL` is set it keeps only the server/credentials and
+forces `<name>_<RAILS_ENV>`. It's in `boot.rb`, as in the pilot, not in `test/test_helper.rb`,
+so every entry point is covered (the test helper, which sets `RAILS_ENV=test` before booting,
+`bin/rails db:*`, the `db:test:prepare` subprocess). `setup_gemfile` no longer appends `pg` when
+the Gemfile already declares it (Bundler rejects a gem declared twice). The test checks the rule
+by loading the generated `boot.rb` in a clean `ruby` process with a development `DATABASE_URL`.
+Verified by hand once: a generated ATOM's `bin/rails test` under
+`DATABASE_URL=.../hostapp_development` ran on `<name>_test`.
+
 **Gemspec rewriting reads once, applies one in-memory pass of targeted substitutions, writes
 once** — not `createATOM.js`'s own blind "rewrite every line, branch on substring" approach
 (verified directly against a real `rails plugin new --full` gemspec, Rails 7.2.3.2, rather than
@@ -459,7 +475,10 @@ repo exists yet at this point. This generator narrows that gap, per ADR 0006, wi
 closing it: a local `git init -b master` + one commit (authored as the `--author`/`--email` the
 generator just collected, via `-c user.name=.../-c user.email=...` rather than relying on
 whatever global git config happens to be present), then `say_status`-logs the exact
-`git remote add`/`git submodule add` follow-up commands — worded generically, no GitHub/GitLab
+`git remote add`/`git submodule add -b release/3` follow-up commands, then the rest of the
+pilot's "Changing an ATOM" workflow (move the host `Gemfile` from the `path:` entry to the
+published gem once it's out, `bundle update <name> --conservative`, commit `Gemfile.lock` with
+the submodule pointer; thecore_devcontainer#15) — worded generically, no GitHub/GitLab
 assumption — rather than creating a remote repository or running `git submodule add` itself
 (deliberately out of scope, ADR 0006: an irreversible, credential-dependent, cross-boundary
 action a human should confirm, matching how `AssociationWiring`'s own cross-boundary dependency
