@@ -142,6 +142,7 @@ class AppTemplateTest < Minitest::Test
       assert status.success?, "`rails new -m app_template.rb` on #{samples_dir} failed:\n#{stdout}\n#{stderr}"
 
       assert_devcontainer_practices(app_path)
+      assert_docker_build_practices(app_path)
     end
   end
 
@@ -246,6 +247,17 @@ class AppTemplateTest < Minitest::Test
     assert_match(%r{\Abash \.devcontainer/heal-stale-containers\.sh '\$\{localWorkspaceFolder\}'\z},
       devcontainer["initializeCommand"].to_s,
       "expected initializeCommand to run the heal script on the workspace folder")
+  end
+
+  # The pilot has no root Dockerfile: the Thecore build script (`app-compile.sh` in
+  # thecore_devcontainer) prefers a root `Dockerfile` when one exists, so the Kamal-style
+  # one `rails new` 7.2 generates (and the entrypoint script it runs) must not survive,
+  # or CI would build the app with it instead of the Thecore Dockerfile.
+  def assert_docker_build_practices(app_path)
+    refute File.exist?(File.join(app_path, "Dockerfile")),
+      "expected no root Dockerfile, so the Thecore build script uses the Thecore Dockerfile"
+    refute File.exist?(File.join(app_path, "bin", "docker-entrypoint")),
+      "expected no bin/docker-entrypoint (only the removed Rails Dockerfile runs it)"
   end
 
   # devcontainer.json is JSONC: drops // and /* */ comments outside strings and

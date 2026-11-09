@@ -719,6 +719,16 @@ own mechanism for exactly this ordering problem: `run_after_bundle_callbacks` (a
 `public_task`, after `run_bundle`) invokes every registered block only once bundling has actually
 happened.
 
+**No root `Dockerfile` (thecore_devcontainer#7)**: `rails new` 7.2 writes a Kamal-style root
+`Dockerfile` and the `bin/docker-entrypoint` it runs. The Thecore build script
+(`scripts/app-compile.sh` in `thecore_devcontainer`) builds with a root `Dockerfile` whenever one
+exists, and only falls back to the Thecore one (`/etc/thecore/docker/Dockerfile`) otherwise — so
+the template `remove_file`s both, and the app is built like the pilot (mytask-imas), which has no
+root `Dockerfile`. Done here rather than in the extension, so "Create an App" (which delegates to
+this template) and a bare `rails new -m` behave the same. `.dockerignore` is kept: the Thecore
+Dockerfile's `ADD .` honours it (the extension's "Create an App" still deletes it on its own).
+The real-samples test (S1, below) asserts both files are gone (`assert_docker_build_practices`).
+
 **The installer chain is genuinely optional, not a test-only escape hatch** — gated behind a real
 interactive `yes?` prompt ("Run `bundle install` and the standard installer generators ... now?"),
 matching this ticket's "uses Thor's `ask`/`yes?` DSL for any genuine choice point" acceptance
@@ -879,7 +889,8 @@ responsibility, and it has no test suite by design — see its own CLAUDE.md).
 this time from a local checkout of `thecore`'s **real** `samples/`, and asserts on that app the
 practices a developer gets from the pilot (mytask-imas): today the heal, host-home and
 plugin-check scripts in `.devcontainer/`, executable, and `initializeCommand` running the heal
-script on `${localWorkspaceFolder}` (`devcontainer.json` is parsed as JSONC). The fixture run
+script on `${localWorkspaceFolder}` (`devcontainer.json` is parsed as JSONC); no root `Dockerfile`
+and no `bin/docker-entrypoint`. The fixture run
 above keeps proving the fetch mechanism; this one catches drift between samples and template.
 Each area has its own `assert_*_practices(app_path)` helper called from that one method, so a
 later ticket adds a helper and a call there, and `rails new` still runs once.
