@@ -2,6 +2,8 @@ require "test_helper"
 require "open3"
 require "tmpdir"
 require "json"
+require "yaml"
+require "uri"
 
 # The App application template (thecore_generators#17/#18, ADR 0005 in the thecore repo)
 # is a Rails application template, not a Thor::Group generator — its only real entry
@@ -150,6 +152,8 @@ class AppTemplateTest < Minitest::Test
       assert status.success?, "`rails new -m app_template.rb` on #{samples_dir} failed:\n#{stdout}\n#{stderr}"
 
       assert_devcontainer_practices(app_path)
+      assert_test_database_practices(app_path)
+      assert_ci_test_database_practices(app_path)
       assert_agent_docs_practices(app_path)
       assert_docker_build_practices(app_path)
       assert_gem_floor_practices(app_path)
@@ -444,6 +448,87 @@ class AppTemplateTest < Minitest::Test
       section << line
     end
     section.join
+  end
+
+  # The pilot's test-database rule (mytask-imas test/test_helper.rb): the devcontainer's
+  # global DATABASE_URL points at development, so the test helper swaps whatever database
+  # it names for `<app>_test` before the app boots -- running tests never wipes dev data.
+  # Observed by loading the generated helper and stopping at its first require_relative
+  # (config/environment), where the app would read DATABASE_URL.
+  def assert_test_database_practices(app_path)
+    {
+      "postgres://postgres:postgres@db:5432/app_dev?pool=5" => "postgres://postgres:postgres@db:5432/sample_app_test?pool=5",
+      "postgres://postgres:postgres@db:5432/anything_else" => "postgres://postgres:postgres@db:5432/sample_app_test",
+      # Server only, no database (the CI samples' form): still the test database.
+      "postgres://postgres:postgres@db:5432" => "postgres://postgres:postgres@db:5432/sample_app_test"
+    }.each do |dev_url, test_url|
+      assert_equal test_url, database_url_seen_by_test_helper(app_path, dev_url),
+        "expected test/test_helper.rb to swap DATABASE_URL=#{dev_url} for the test database"
+    end
+    assert_equal "", database_url_seen_by_test_helper(app_path, nil),
+      "expected test/test_helper.rb to leave DATABASE_URL unset when it is unset"
+  end
+
+  def database_url_seen_by_test_helper(app_path, database_url)
+    # Stdlib the helper may require is preloaded, so that only the helper's own
+    # require_relative of config/environment reaches the stub.
+    probe = <<~'RUBY'
+      require "uri"
+      $stdout.sync = true
+      def require_relative(path)
+        abort "unexpected require_relative #{path}" unless path.end_with?("config/environment")
+        print ENV["DATABASE_URL"].to_s
+        exit!(0)
+      end
+      load "test/test_helper.rb"
+    RUBY
+    env = { "DATABASE_URL" => database_url }
+    stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, "-e", probe, chdir: app_path)
+    assert status.success?, "loading test/test_helper.rb failed:\n#{stderr}"
+    stdout
+  end
+
+  # Both CI samples' test jobs can actually reach a database: a Postgres service, a
+  # DATABASE_URL naming only that service (so database.yml's `<app>_test` applies, the
+  # same name the test helper forces), RAILS_ENV=test, and the test database prepared
+  # before the tests run -- `rails test` alone fails with NoDatabaseError on a fresh server.
+  def assert_ci_test_database_practices(app_path)
+    gitlab = YAML.safe_load(File.read(File.join(app_path, ".gitlab-ci.yml")), aliases: true)
+    test_job = gitlab.fetch("test") { flunk "expected a `test` job in .gitlab-ci.yml" }
+    service = Array(test_job["services"]).map { |s| s.is_a?(Hash) ? s : { "name" => s } }
+      .find { |s| s["name"].to_s.start_with?("postgres") }
+    refute_nil service, "expected the GitLab test job to declare a Postgres service"
+    gitlab_vars = (gitlab["variables"] || {}).merge(test_job["variables"] || {})
+    gitlab_host = service["alias"] || service["name"].split(":").first
+    assert_ci_database_url(gitlab_vars["DATABASE_URL"], gitlab_host, gitlab_vars["POSTGRES_PASSWORD"], "GitLab")
+    assert_equal "test", gitlab_vars["RAILS_ENV"], "expected the GitLab test job to set RAILS_ENV=test"
+    assert_ci_prepares_test_database(Array(test_job["script"]), "GitLab")
+
+    github = YAML.safe_load(File.read(File.join(app_path, ".github/workflows/ci.yml")), aliases: true)
+    test_job = github.dig("jobs", "test") || flunk("expected a `test` job in .github/workflows/ci.yml")
+    service_name, service = (test_job["services"] || {}).find { |_, s| s["image"].to_s.start_with?("postgres") }
+    refute_nil service, "expected the GitHub test job to declare a Postgres service"
+    github_env = (github["env"] || {}).merge(test_job["env"] || {})
+    assert_ci_database_url(github_env["DATABASE_URL"], service_name, service.dig("env", "POSTGRES_PASSWORD"), "GitHub")
+    assert_equal "test", github_env["RAILS_ENV"], "expected the GitHub test job to set RAILS_ENV=test"
+    assert_ci_prepares_test_database(test_job["steps"].filter_map { |step| step["run"] }, "GitHub")
+  end
+
+  def assert_ci_database_url(url, host, password, ci)
+    refute_nil url, "expected the #{ci} test job to set DATABASE_URL"
+    uri = URI.parse(url)
+    assert_equal "postgres", uri.scheme.sub(/ql\z/, ""), "expected the #{ci} DATABASE_URL to be a Postgres URL"
+    assert_equal host, uri.host, "expected the #{ci} DATABASE_URL to point at the Postgres service"
+    assert_equal password.to_s, uri.password.to_s, "expected the #{ci} DATABASE_URL to use the service's password"
+    assert_includes ["", "/"], uri.path, "expected the #{ci} DATABASE_URL to name only the server, not a database"
+  end
+
+  def assert_ci_prepares_test_database(commands, ci)
+    prepare = commands.index { |c| c.match?(/\brails db:test:prepare\b/) }
+    run = commands.index { |c| c.match?(/\brails test\b/) }
+    refute_nil run, "expected the #{ci} test job to run `rails test`"
+    refute_nil prepare, "expected the #{ci} test job to run `rails db:test:prepare`"
+    assert_operator prepare, :<, run, "expected the #{ci} test job to prepare the test database before the tests"
   end
 
   # devcontainer.json is JSONC: drops // and /* */ comments outside strings and
