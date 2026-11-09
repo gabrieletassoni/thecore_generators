@@ -121,6 +121,9 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     assert_includes output, "git submodule add -b release/3 <remote-url> vendor/submodules/tcp_debugger"
     assert_includes output, 'gem "tcp_debugger", path: "vendor/submodules/tcp_debugger"'
     assert_includes output, "bundle update tcp_debugger --conservative"
+    # The ATOM's own tests: create its test database first, then the Rails test runner.
+    assert_includes output, "bundle install && bin/rails db:create && bin/rails test"
+    refute_includes output, "rake test"
 
     assert_file "#{atom}/lib/tcp_debugger/engine.rb"
     assert_file "#{atom}/tcp_debugger.gemspec" do |content|
@@ -134,7 +137,7 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
       assert_match(/spec\.add_dependency "thecore_ui_rails_admin", "~> 3\.8"/, content)
       assert_match(/spec\.metadata\["allowed_push_host"\]\s*=\s*"https:\/\/rubygems\.org"/, content)
       assert_match(/spec\.metadata\["source_code_uri"\]\s*=\s*spec\.homepage/, content)
-      assert_match(/spec\.metadata\["changelog_uri"\]\s*=\s*"#\{spec\.homepage\}\/blob\/master\/CHANGELOG\.md"/, content)
+      assert_match(/spec\.metadata\["changelog_uri"\]\s*=\s*"#\{spec\.homepage\}\/blob\/release\/3\/CHANGELOG\.md"/, content)
     end
 
     assert_file "#{atom}/Gemfile" do |content|
@@ -186,12 +189,29 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
       assert_equal "dev@alchemic.it", data["variables"]["GITLAB_EMAIL"]
       assert_equal "Alchemic IT", data["variables"]["GITLAB_USER_NAME"]
       assert_equal "gabrieletassoni/vscode-devcontainers-thecore:3", data["image"]
+      assert_gitlab_publish_ci(data)
+      # No private gem host: gem-compile.sh falls back to RubyGems only when the target is unset,
+      # never on an "https:///" built from an empty variable.
+      refute data["variables"].key?("GITLAB_GEM_REPO_TARGET"), "expected no gem target, so RubyGems is used"
+    end
+    %w[script/security_summary.rb test/script/security_summary_test.rb].each do |file|
+      assert_file "#{atom}/#{file}" do |content|
+        assert_equal File.read(File.join(SAMPLES_FIXTURE_DIR, file)), content
+      end
     end
 
     git_dir = File.join(destination_root, atom, ".git")
     assert File.directory?(git_dir), "expected #{atom} to be git-initialized"
     log = Dir.chdir(File.join(destination_root, atom)) { `git log --oneline` }
     assert_equal 1, log.lines.size, "expected exactly one initial commit, got:\n#{log}"
+
+    # Publishes like the real ATOMs: the repository lives on release/3, the only branch that publishes.
+    branch = Dir.chdir(File.join(destination_root, atom)) { `git branch --show-current`.strip }
+    assert_equal "release/3", branch
+    assert_includes output, "git push -u origin release/3"
+    gempush = YAML.safe_load(File.read(File.join(destination_root, atom, ".github/workflows/gempush.yml")))
+    assert_equal({ "push" => { "branches" => ["release/3"] } }, gempush.fetch(true, gempush["on"]),
+      "expected the GitHub publish workflow to run only on pushes to release/3")
 
     assert_file "Gemfile" do |content|
       assert_match(/gem "tcp_debugger", path: "vendor\/submodules\/tcp_debugger"/, content)
@@ -205,7 +225,8 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
   end
 
   test "--skip-api-admin-deps omits model_driven_api/thecore_ui_rails_admin from the Gemfile, gemspec, and entry file" do
-    run_generator ["tcp_debugger", "--skip-api-admin-deps"] + NON_INTERACTIVE_ARGS
+    output = run_generator ["tcp_debugger", "--skip-api-admin-deps", "--gem-host=https://gems.example.com/"] +
+      NON_INTERACTIVE_ARGS
 
     atom = "vendor/submodules/tcp_debugger"
 
@@ -219,10 +240,16 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
       refute_match(/require 'thecore_ui_rails_admin'/, content)
     end
     assert_file "#{atom}/tcp_debugger.gemspec" do |content|
-      assert_match(/spec\.add_dependency "rails"/, content)
+      assert_match(/spec\.add_dependency "rails", "~> 7\.2"$/, content)
       refute_match(/model_driven_api/, content)
       refute_match(/thecore_ui_rails_admin/, content)
+      # --gem-host: the gem is pushed to the private server, and only there.
+      assert_match(/spec\.metadata\["allowed_push_host"\]\s*=\s*"https:\/\/gems\.example\.com"$/, content)
     end
+    assert_file "#{atom}/.gitlab-ci.yml" do |content|
+      assert_equal "https://gems.example.com/", YAML.safe_load(content).dig("variables", "GITLAB_GEM_REPO_TARGET")
+    end
+    assert_includes output, 'source "https://gems.example.com/" do'
 
     # Scaffold Files/directories are still created regardless of this choice.
     assert_file "#{atom}/config/initializers/after_initialize.rb"
@@ -234,6 +261,16 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     assert_no_file "#{atom}/test/dummy/config/initializers/devise.rb"
 
     assert_generated_atom_tests_pass(atom)
+    # Thecore 3 hosts run Rails 7.2: without a lockfile the ATOM must not resolve a newer Rails.
+    assert_match(/^    rails \(7\.2\.\d/, File.read(File.join(destination_root, atom, "Gemfile.lock")))
+  end
+
+  test "--gem-host accepts only a host name, not a path" do
+    error = assert_raises(Thor::Error) do
+      run_generator ["tcp_debugger", "--gem-host=gems.example.com/private"] + NON_INTERACTIVE_ARGS, debug: true
+    end
+    assert_match(/--gem-host/, error.message)
+    assert_no_directory "vendor/submodules/tcp_debugger"
   end
 
   test "does not duplicate an existing host Gemfile entry for the same gem name" do
@@ -247,6 +284,47 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
       assert_match(/gem 'tcp_debugger', '~> 1\.0'/, content)
       refute_match(/path: "vendor\/submodules\/tcp_debugger"/, content)
     end
+  end
+
+  # S2 on thecore's REAL samples (THECORE_REAL_SAMPLES_DIR, as in the App template's S1 test;
+  # skipped when unset, so the suite stays offline): the ATOM's CLAUDE.md documents how it is
+  # tested, published and scanned, and the security summary's own test passes inside the ATOM.
+  test "an ATOM generated from the real thecore samples documents publishing and passes the summary's test" do
+    samples_dir = ENV["THECORE_REAL_SAMPLES_DIR"].to_s.strip
+    skip "THECORE_REAL_SAMPLES_DIR not set: point it at a thecore checkout's samples/" if samples_dir.empty?
+    ENV["THECORE_SAMPLES_SOURCE"] = samples_dir
+
+    run_generator ["tcp_debugger", "--skip-api-admin-deps"] + NON_INTERACTIVE_ARGS
+    atom = "vendor/submodules/tcp_debugger"
+
+    claude_md = File.read(File.join(destination_root, atom, "CLAUDE.md"))
+    assert_equal File.read(File.join(samples_dir, "ATOM_CLAUDE.md")), claude_md
+    commands = markdown_section(claude_md, "## Common commands")
+    create_db, run_tests = commands.index("bin/rails db:create"), commands.index("bin/rails test")
+    assert create_db && run_tests && create_db < run_tests,
+      "expected the test sequence bin/rails db:create, then bin/rails test"
+    refute_includes commands, "rake test"
+    publishing = markdown_section(claude_md, "## Publishing")
+    ["release/3", "lib/<name>/version.rb", "RubyGems", "gempush.yml", "allowed_push_host", "gem-compile.sh",
+     "GITLAB_GEM_REPO_TARGET", "--gem-host", "bundle update <name> --conservative"].each do |term|
+      assert_includes publishing, term, "expected \"Publishing\" in the ATOM's CLAUDE.md to cover #{term}"
+    end
+    scanning = markdown_section(claude_md, "## Security scanning")
+    ["SAST", "Secret Detection", "security-summary", "script/security_summary.rb", "allow_failure",
+     "bundler-audit"].each do |term|
+      assert_includes scanning, term, "expected \"Security scanning\" in the ATOM's CLAUDE.md to cover #{term}"
+    end
+
+    %w[script/security_summary.rb test/script/security_summary_test.rb].each do |file|
+      assert_equal File.read(File.join(samples_dir, file)), File.read(File.join(destination_root, atom, file))
+    end
+    assert_generated_atom_tests_pass(atom)
+    output, status = Bundler.with_unbundled_env do
+      Open3.capture2e({ "BUNDLE_GEMFILE" => File.join(destination_root, atom, "Gemfile"), "RAILS_ENV" => "test" },
+        "bin/rails test test/script/security_summary_test.rb", chdir: File.join(destination_root, atom))
+    end
+    assert status.success?, "expected the security summary's test to pass in the ATOM:\n#{output}"
+    assert_match(/\b3 runs, .*\b0 failures, 0 errors\b/, output, "expected the summary test's three cases to run")
   end
 
   # Exercises just #fetch_claude_md directly, the same "build the generator
@@ -314,6 +392,39 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
       output
     end.last
     assert_match(/[1-9]\d* runs, \d+ assertions, 0 failures, 0 errors/, output, "the ATOM's own tests didn't run")
+  end
+
+  # The real spot ATOMs' GitLab CI (mytask): build and push only when lib/*/version.rb changes
+  # (never on a tag), plus GitLab CE's SAST and Secret Detection, whose findings the
+  # security-summary job turns into an orange job.
+  def assert_gitlab_publish_ci(data)
+    build = data.fetch("build_gem")
+    assert_equal ["/usr/bin/gem-compile.sh"], build["script"]
+    assert_equal [{ "if" => "$CI_COMMIT_TAG", "when" => "never" },
+      { "changes" => ["lib/*/version.rb"], "when" => "on_success" },
+      { "when" => "never" }], build["rules"], "expected build_gem to run only on a version bump"
+
+    templates = Array(data["include"]).map { |i| i["template"] }
+    assert_equal %w[Jobs/SAST.gitlab-ci.yml Jobs/Secret-Detection.gitlab-ci.yml], templates
+    assert_equal [], data.dig("semgrep-sast", "needs")
+    assert_equal [], data.dig("secret_detection", "needs")
+
+    summary = data.fetch("security-summary")
+    assert_equal "test", summary["stage"]
+    assert_includes data["stages"], "test"
+    assert summary["allow_failure"], "expected security-summary to turn orange, not red"
+    assert_equal %w[semgrep-sast secret_detection], summary["needs"].map { |n| n["job"] }
+    assert(summary["needs"].all? { |n| n["optional"] }, "expected both scanner needs to be optional")
+    assert_equal ["ruby script/security_summary.rb gl-sast-report.json gl-secret-detection-report.json"],
+      summary["script"]
+  end
+
+  # The body of a "## " section, up to the next "## " heading.
+  def markdown_section(markdown, heading)
+    start = markdown.index(/^#{Regexp.escape(heading)}$/)
+    flunk "expected a \"#{heading}\" section" unless start
+    rest = markdown[(start + heading.size)..]
+    rest[0, rest.index(/^## /) || rest.size]
   end
 
   def create_host_gemfile!

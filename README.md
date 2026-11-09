@@ -266,14 +266,22 @@ with `--non-interactive`) for the same five fields `createATOM.js` always has, t
   per-developer choice this ecosystem already treats as generic). `gempush.yml`'s two
   long-standing bugs are fixed here (a broken `awk` pipeline computing the version string; a
   `version_exists` check referenced in `if:` conditions but never actually set, so the
-  tag/publish steps have never run for any ATOM generated this way). The gemspec's
-  `allowed_push_host` stays hardcoded to `https://rubygems.org`.
+  tag/publish steps have never run for any ATOM generated this way). Both publish like the real
+  ATOMs (thecore_devcontainer#14): `gempush.yml` only on pushes to `release/3`; `.gitlab-ci.yml`'s
+  `build_gem` only when `lib/*/version.rb` changes, plus GitLab's SAST and Secret Detection
+  templates and a `security-summary` job running `script/security_summary.rb`, which is fetched
+  from `thecore`'s samples with its test (`test/script/security_summary_test.rb`).
+- `--gem-host=HOST` (default `rubygems.org`) names the gem server: the gemspec's
+  `allowed_push_host` becomes `https://HOST`, and for a host other than RubyGems the GitLab CI
+  pushes there (`GITLAB_GEM_REPO_TARGET`). With the default the variable is left out, so the
+  image's `gem-compile.sh` pushes to RubyGems. The gemspec requires `rails ~> 7.2`, the Rails of
+  Thecore 3 hosts.
 - Rewrites the gemspec's authors/email/homepage/summary/description/metadata fields via targeted
   in-memory substitutions (not `createATOM.js`'s own blind full-file line rewrite, which —
   verified directly against a current `rails plugin new --full` gemspec — silently drops the
   gem's own `rails` dependency when adding the two Thecore ones; this appends instead of
   replacing).
-- `git init`s the new ATOM directory with one initial commit, then **logs** (never runs) the
+- `git init`s the new ATOM directory on `release/3` with one initial commit, then **logs** (never runs) the
   exact follow-up commands to create a remote and `git submodule add -b release/3` it into the
   host app, followed by the "Changing an ATOM" workflow: how to move the host `Gemfile` from the
   `path:` entry to the published gem (`bundle update <name> --conservative`, then commit

@@ -1,5 +1,19 @@
 ## Unreleased
 
+- `thecore:atom` publishes like the real ATOMs (thecore_devcontainer#14). The ATOM's repository
+  starts on `release/3`, and the next steps push there. `gempush.yml` runs only on pushes to
+  `release/3`. `.gitlab-ci.yml` builds the gem only when `lib/*/version.rb` changes (never on a
+  tag), includes GitLab's SAST and Secret Detection templates, and adds a `security-summary` job
+  running `script/security_summary.rb`, which the generator now fetches from `thecore`'s samples
+  together with its test. New option `--gem-host=HOST` (default `rubygems.org`): the gemspec's
+  `allowed_push_host` becomes `https://HOST`, and for a private server the GitLab CI pushes there
+  (`GITLAB_GEM_REPO_TARGET`); with RubyGems the variable is left out, so `gem-compile.sh` falls
+  back to RubyGems instead of pushing to `https:///`. The gemspec requires `rails ~> 7.2` (with
+  `--skip-api-admin-deps` the ATOM used to resolve Rails 8.1), `changelog_uri` points at
+  `release/3`, and the next steps give the ATOM's test sequence (`bin/rails db:create`, then
+  `bin/rails test`). A new test runs on `thecore`'s real samples when `THECORE_REAL_SAMPLES_DIR`
+  is set and runs the summary's test inside the generated ATOM. Needs the matching `thecore`
+  master, which carries the updated `samples/ATOM_CLAUDE.md`.
 - The App application template also fetches `samples/.github/workflows/security.yml`,
   `samples/script/security_summary.rb` and `samples/test/script/security_summary_test.rb`
   (thecore_devcontainer#9): a new app gets the pilot's security CI. On GitLab (`.gitlab-ci.yml`,
