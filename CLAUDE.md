@@ -893,6 +893,31 @@ one more place for the two to drift apart, when the fixture's only job is provin
 mechanism* works, not re-verifying `thecore`'s own sample content (that's `thecore`'s own
 responsibility, and it has no test suite by design — see its own CLAUDE.md).
 
+**The real-samples run (seam S1, thecore_devcontainer#5/#6)** —
+`test_app_generated_from_real_thecore_samples_carries_pilot_practices` generates a second app,
+this time from a local checkout of `thecore`'s **real** `samples/`, and asserts on that app the
+practices a developer gets from the pilot (mytask-imas): today the heal, host-home and
+plugin-check scripts in `.devcontainer/`, executable, and `initializeCommand` running the heal
+script on `${localWorkspaceFolder}` (`devcontainer.json` is parsed as JSONC). The fixture run
+above keeps proving the fetch mechanism; this one catches drift between samples and template.
+Each area has its own `assert_*_practices(app_path)` helper called from that one method, so a
+later ticket adds a helper and a call there, and `rails new` still runs once.
+
+It reads the samples directory from `THECORE_REAL_SAMPLES_DIR` (the `samples/` folder itself, e.g.
+`<thecore checkout>/samples`, any worktree included). Unset or blank, the test **skips**, so the
+default suite stays offline; set to a path without `devcontainer/devcontainer.json`, it fails
+rather than skipping. Ruby isn't on the developer host, so in the dev image mount the checkout and
+pass the path:
+
+```bash
+docker run --rm ... -e THECORE_REAL_SAMPLES_DIR=/thecore/samples \
+  -v <thecore checkout>:/thecore:ro -v "$PWD":/w -w /w gabrieletassoni/vscode-devcontainers-thecore:3 \
+  bash -c 'bundle exec ruby -Itest test/templates/app_template_test.rb'
+```
+
+Inside the devcontainer, `THECORE_REAL_SAMPLES_DIR=<thecore checkout>/samples bundle exec rake test`.
+To test a `thecore` samples change, point it at the checkout that carries the change.
+
 ## Key invariants and gotchas
 
 - **Never reimplement ActiveRecord's own generator logic.** Every override in this gem calls

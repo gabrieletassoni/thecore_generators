@@ -1,6 +1,7 @@
 require "test_helper"
 require "open3"
 require "tmpdir"
+require "json"
 
 # The App application template (thecore_generators#17/#18, ADR 0005 in the thecore repo)
 # is a Rails application template, not a Thor::Group generator — its only real entry
@@ -25,6 +26,11 @@ class AppTemplateTest < Minitest::Test
   # gem doesn't own and shouldn't duplicate a live copy of) — keeps the whole suite
   # offline and deterministic, no live HTTP calls to raw.githubusercontent.com.
   SAMPLES_FIXTURE_DIR = File.expand_path("../fixtures/thecore_samples", __dir__)
+  # Seam S1 of thecore_devcontainer#5: a local checkout of thecore's REAL samples/
+  # directory (e.g. `<thecore checkout>/samples`). Unset = the real-samples test skips,
+  # so the suite stays offline by default; point it at any thecore checkout (a worktree
+  # included) to test that checkout's samples through this template.
+  REAL_SAMPLES_ENV = "THECORE_REAL_SAMPLES_DIR"
 
   def test_core_scaffolding_matches_thecore_generators_17_acceptance_criteria
     Dir.mktmpdir do |dir|
@@ -120,6 +126,25 @@ class AppTemplateTest < Minitest::Test
     end
   end
 
+  # Seam S1 (thecore_devcontainer#5): the app a developer actually gets from the REAL
+  # thecore samples, not the minimal fixture above. Every app-side practice the pilot
+  # (mytask-imas) has is asserted here, one `assert_*_practices` helper per area --
+  # later tickets add their own helper and call it from this one method, so the
+  # expensive `rails new` runs once.
+  def test_app_generated_from_real_thecore_samples_carries_pilot_practices
+    samples_dir = real_samples_dir
+    Dir.mktmpdir do |dir|
+      app_path = File.join(dir, "sample_app")
+
+      stdout, stderr, status = spawn_rails_new(
+        app_path, chdir: dir, extra_env: { "THECORE_SAMPLES_SOURCE" => samples_dir }
+      )
+      assert status.success?, "`rails new -m app_template.rb` on #{samples_dir} failed:\n#{stdout}\n#{stderr}"
+
+      assert_devcontainer_practices(app_path)
+    end
+  end
+
   # thecore_generators#23: non-interactive mode, installer chain declined. Fed empty
   # stdin (not "no\n") specifically to prove the template never reads from stdin at all
   # on this path -- if it fell through to the interactive `yes?` call despite the env
@@ -195,6 +220,66 @@ class AppTemplateTest < Minitest::Test
   end
 
   private
+
+  # THECORE_REAL_SAMPLES_DIR: unset/blank skips (offline default); set but not a
+  # thecore samples directory fails, so a typo never turns into a silent skip.
+  def real_samples_dir
+    dir = ENV[REAL_SAMPLES_ENV].to_s.strip
+    skip "#{REAL_SAMPLES_ENV} not set: point it at a thecore checkout's samples/ to run S1" if dir.empty?
+    dir = File.expand_path(dir)
+    assert File.file?(File.join(dir, "devcontainer", "devcontainer.json")),
+      "#{REAL_SAMPLES_ENV}=#{dir} is not a thecore samples/ directory (no devcontainer/devcontainer.json)"
+    dir
+  end
+
+  # The pilot's devcontainer practices: stale containers healed on the host before
+  # compose starts, the host home aliased for Claude Code's plugin paths, and the
+  # plugin check -- each a script the container can run, wired where the pilot wires it.
+  def assert_devcontainer_practices(app_path)
+    %w[heal-stale-containers.sh link-host-home.sh check-plugins.sh].each do |script|
+      path = File.join(app_path, ".devcontainer", script)
+      assert File.file?(path), "expected .devcontainer/#{script} in the generated app"
+      assert File.executable?(path), "expected .devcontainer/#{script} to be executable"
+    end
+
+    devcontainer = parse_jsonc(File.read(File.join(app_path, ".devcontainer", "devcontainer.json")))
+    assert_match(%r{\Abash \.devcontainer/heal-stale-containers\.sh '\$\{localWorkspaceFolder\}'\z},
+      devcontainer["initializeCommand"].to_s,
+      "expected initializeCommand to run the heal script on the workspace folder")
+  end
+
+  # devcontainer.json is JSONC: drops // and /* */ comments outside strings and
+  # trailing commas, then parses it as JSON.
+  def parse_jsonc(text)
+    out = +""
+    i = 0
+    in_string = false
+    while i < text.length
+      c = text[i]
+      if in_string
+        out << c
+        if c == "\\"
+          out << text[i + 1].to_s
+          i += 1
+        elsif c == '"'
+          in_string = false
+        end
+      elsif c == '"'
+        in_string = true
+        out << c
+      elsif text[i, 2] == "//"
+        i += 1 until i >= text.length || text[i] == "\n"
+        next
+      elsif text[i, 2] == "/*"
+        i = (text.index("*/", i + 2) || text.length - 2) + 2
+        next
+      else
+        out << c
+      end
+      i += 1
+    end
+    JSON.parse(out.gsub(/,(\s*[}\]])/, "\\1"))
+  end
 
   # Extracted so thecore_generators#18 (which extends this same test with
   # devcontainer/CI/CLAUDE.md asset assertions against the same generated app, per its

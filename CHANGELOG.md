@@ -12,6 +12,10 @@
   `docker compose up`: it removes the project's containers when the network they point at was
   deleted, which otherwise failed every devcontainer start with `network <id> not found`
   (ADR 0005 in thecore_devcontainer). Needs the matching `thecore` master, which carries the file.
+- The App template's end-to-end test also runs on a local checkout of `thecore`'s real samples
+  when `THECORE_REAL_SAMPLES_DIR` names its `samples/` directory (skipped when unset), and asserts
+  the generated app's heal, host-home and plugin-check scripts and `initializeCommand`
+  (thecore_devcontainer#6). Test-only, no change to the generated app.
 
 ## 3.13.0
 
