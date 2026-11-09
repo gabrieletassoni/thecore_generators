@@ -137,6 +137,9 @@ module Thecore
                   version=$(grep -oP 'VERSION = "\\K[^"]+' lib/*/version.rb | awk -F'.' '{print $1"."$2"."$3}')
                   git tag -a $version -m "Version $version"
                   git push --tags
+      YAML
+
+      GEMPUSH_RUBYGEMS_STEP = <<~YAML
               - name: Publish to RubyGems
                 if: env.version_exists == 'false'
                 env:
@@ -148,6 +151,21 @@ module Thecore
                   printf -- "---\\n:rubygems_api_key: ${GEM_HOST_API_KEY}\\n" > $HOME/.gem/credentials
                   gem build *.gemspec
                   gem push *.gem
+      YAML
+
+      # --gem-host other than RubyGems: the gemspec's allowed_push_host names that host, so
+      # pushing to RubyGems would be rejected. `gem push --host` reads the key from
+      # GEM_HOST_API_KEY, here the GEMS_REPO_CREDENTIALS repository secret (the same name as
+      # the GitLab CI variable).
+      GEMPUSH_PRIVATE_HOST_STEP = <<~YAML
+              # Needs the GEMS_REPO_CREDENTIALS repository secret: the API key of %<url>s.
+              - name: Publish to %<host>s
+                if: env.version_exists == 'false'
+                env:
+                  GEM_HOST_API_KEY: ${{secrets.GEMS_REPO_CREDENTIALS}}
+                run: |
+                  gem build *.gemspec
+                  gem push --host %<url>s *.gem
       YAML
 
       GITLAB_CI_HEADER = <<~YAML
@@ -308,16 +326,22 @@ module Thecore
       # would wipe the host app's development data. It lives in the dummy's boot.rb, not in
       # test/test_helper.rb, so every entry point is covered (the test helper, which sets
       # RAILS_ENV=test before booting, bin/rails db:*, the db:test:prepare subprocess Rails
-      # spawns for a pending schema) - same place as in the pilot's own ATOMs.
+      # spawns for a pending schema) - same place as in the pilot's own ATOMs. Same URI rule as
+      # the App template's test helper: a regex on the path would take a server-only URL's host
+      # for the database name.
       def force_atom_database_under_database_url
         append_to_file File.join(atom_root, "test/dummy/config/boot.rb"), <<~RUBY
 
           # PostgreSQL is the only database target. DATABASE_URL overrides database.yml, and the
           # devcontainer points it at the host app's development database, which this dummy app's
           # schema load or db:test:prepare would clobber. Keep DATABASE_URL's server/credentials,
-          # but always use this ATOM's own per-environment database (#{file_name}_test for tests).
+          # but always use this ATOM's own per-environment database (#{file_name}_test for tests),
+          # replacing the one the URL names or adding it when the URL names only the server.
           if ENV["DATABASE_URL"].to_s.start_with?("postgres")
-            ENV["DATABASE_URL"] = ENV["DATABASE_URL"].sub(%r{/[^/?]*(?=\\?|\\z)}, "/#{file_name}_\#{ENV.fetch("RAILS_ENV", "development")}")
+            require "uri"
+            atom_database_url = URI.parse(ENV["DATABASE_URL"])
+            atom_database_url.path = "/#{file_name}_\#{ENV.fetch("RAILS_ENV", "development")}"
+            ENV["DATABASE_URL"] = atom_database_url.to_s
           end
         RUBY
       end
@@ -365,8 +389,8 @@ module Thecore
         create_file File.join(atom_root, "config/locales/it.yml"), "it:\n"
       end
 
-      # The real ATOMs' publish CI. GitHub (base gems): gempush.yml publishes to RubyGems from
-      # release/3 only. GitLab (spot gems, mytask's .gitlab-ci.yml): build_gem runs
+      # The real ATOMs' publish CI. GitHub (base gems): gempush.yml publishes from release/3 only,
+      # to RubyGems, or with --gem-host to that host (#gempush_yml). GitLab (spot gems, mytask's .gitlab-ci.yml): build_gem runs
       # gem-compile.sh only when lib/*/version.rb changes, never on a tag. gem-compile.sh pushes
       # to GITLAB_GEM_REPO_TARGET, or to RubyGems when it's unset, so the variable is written only
       # for a private gem host: an "https://${GEM_HOST}/" with an empty variable would be
@@ -374,7 +398,7 @@ module Thecore
       # green whatever they find, so security-summary runs script/security_summary.rb (fetched
       # from thecore's samples by #fetch_security_summary) on their reports.
       def create_ci_files
-        create_file File.join(atom_root, ".github/workflows/gempush.yml"), GEMPUSH_YML_CONTENT
+        create_file File.join(atom_root, ".github/workflows/gempush.yml"), gempush_yml
         create_file File.join(atom_root, ".gitlab-ci.yml"), GITLAB_CI_HEADER + gitlab_ci.to_yaml.delete_prefix("---\n")
       end
 
@@ -466,14 +490,6 @@ module Thecore
       # gemspec edits already succeeded) - #ensure_atom_does_not_already_exist!
       # then refuses a same-named retry until it's removed by hand; the abort
       # message says so.
-      #
-      # NOTE: like the App template's own fetch of thecore/samples/CLAUDE.md
-      # before it, this 404s against the real default GitHub URL until thecore's
-      # `master` actually carries the commit that added samples/ATOM_CLAUDE.md
-      # (thecore#18) - as of this gem's 3.11.0 release that commit exists only in
-      # a local `thecore` checkout, not yet pushed. Same operational sequencing
-      # note as the App template's own CLAUDE.md section: push `thecore` before
-      # relying on the default in production.
       def fetch_claude_md
         Thecore::Generators::SampleFetcher.fetch_thecore_sample(
           self, "ATOM_CLAUDE.md", File.join(atom_root, "CLAUDE.md"), label: "the thecore:atom generator"
@@ -603,6 +619,13 @@ module Thecore
         return "" if rubygems_host?
 
         %( inside the `source "https://#{gem_host}/" do ... end` block)
+      end
+
+      # The GitHub publish workflow pushes to the same host the gemspec's allowed_push_host names.
+      def gempush_yml
+        step = rubygems_host? ? GEMPUSH_RUBYGEMS_STEP : format(GEMPUSH_PRIVATE_HOST_STEP, host: gem_host, url: "https://#{gem_host}")
+        # The step is a heredoc of its own: indent it to the steps list's level.
+        GEMPUSH_YML_CONTENT + step.gsub(/^/, "      ")
       end
 
       def rubygems_host?

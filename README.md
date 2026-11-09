@@ -247,7 +247,7 @@ with `--non-interactive`) for the same five fields `createATOM.js` always has, t
   (default: the devcontainer's `db`) and uses `<name>_development`/`_test`/`_production`. Its
   `config/boot.rb` applies the test-database rule: when `DATABASE_URL` is set (the devcontainer
   points it at the host app's development database), it keeps the server/credentials but always
-  uses `<name>_<RAILS_ENV>`, so running the ATOM's tests (the test helper sets `RAILS_ENV=test`)
+  uses `<name>_<RAILS_ENV>` (also when the URL names only the server), so running the ATOM's tests (the test helper sets `RAILS_ENV=test`)
   never touches development data. `--skip-ci` drops the SQLite-based `.github/workflows/ci.yml`
   and `.github/dependabot.yml` `rails plugin new` writes by itself: the only CI is Thecore's own
   (below).
@@ -273,8 +273,10 @@ with `--non-interactive`) for the same five fields `createATOM.js` always has, t
   from `thecore`'s samples with its test (`test/script/security_summary_test.rb`).
 - `--gem-host=HOST` (default `rubygems.org`) names the gem server: the gemspec's
   `allowed_push_host` becomes `https://HOST`, and for a host other than RubyGems the GitLab CI
-  pushes there (`GITLAB_GEM_REPO_TARGET`). With the default the variable is left out, so the
-  image's `gem-compile.sh` pushes to RubyGems. The gemspec requires `rails ~> 7.2`, the Rails of
+  pushes there (`GITLAB_GEM_REPO_TARGET`), and so does `gempush.yml` (`gem push --host
+  https://HOST`, with the API key in the GitHub repository secret `GEMS_REPO_CREDENTIALS`). With
+  the default the variable is left out, so the image's `gem-compile.sh` pushes to RubyGems, and
+  `gempush.yml` pushes to RubyGems with the `RUBYGEMS_AUTH_TOKEN` secret. The gemspec requires `rails ~> 7.2`, the Rails of
   Thecore 3 hosts.
 - Rewrites the gemspec's authors/email/homepage/summary/description/metadata fields via targeted
   in-memory substitutions (not `createATOM.js`'s own blind full-file line rewrite, which —
