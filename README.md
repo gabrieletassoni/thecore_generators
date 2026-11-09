@@ -399,6 +399,9 @@ for the full design and why the two stay separate).
   location is one overridable point,
   `ENV["THECORE_SAMPLES_SOURCE"]`, defaulting to the raw GitHub URL for `thecore`'s `samples/`
   on `master` (`thecore`'s actual default branch).
+- **No root `Dockerfile`** — the `Dockerfile` and `bin/docker-entrypoint` that `rails new` 7.2
+  generates are removed, so the Thecore build script (`app-compile.sh` in `thecore_devcontainer`)
+  builds the app with the Thecore Dockerfile instead of Rails' own. `.dockerignore` is kept.
 - **The standard installer chain** (`devise:install`, `rails_admin:install`, `active_storage:
   install`, `action_text:install`, `action_mailbox:install`, `cancan:ability`, `erd:install`,
   each preceded by the necessary `bundle install`) is genuinely optional, gated behind an

@@ -5,6 +5,11 @@
   `docker compose up`: it removes the project's containers when the network they point at was
   deleted, which otherwise failed every devcontainer start with `network <id> not found`
   (ADR 0005 in thecore_devcontainer). Needs the matching `thecore` master, which carries the file.
+- The App template removes the root `Dockerfile` and `bin/docker-entrypoint` that `rails new` 7.2
+  generates. The Thecore build script (`app-compile.sh` in thecore_devcontainer) used a root
+  `Dockerfile` whenever one existed, so the app was built with Rails' Kamal Dockerfile instead of
+  the Thecore one, unlike the pilot (mytask-imas). Applies to the extension's "Create an App" and to
+  a bare `rails new -m` alike; the real-samples test asserts it (thecore_devcontainer#7).
 - The App template's end-to-end test also runs on a local checkout of `thecore`'s real samples
   when `THECORE_REAL_SAMPLES_DIR` names its `samples/` directory (skipped when unset), and asserts
   the generated app's heal, host-home and plugin-check scripts and `initializeCommand`
