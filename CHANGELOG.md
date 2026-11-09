@@ -1,5 +1,11 @@
 ## Unreleased
 
+- The App application template also fetches `samples/AGENTS.md` and
+  `samples/docs/agents/{issue-tracker,triage-labels,domain}.md` (thecore_devcontainer#13): a new
+  app's agents find the tracker (GitHub Issues or GitLab Issues, picked from the git remote), the
+  five triage labels and the domain-docs layout without `/setup-matt-pocock-skills`, and agents
+  other than Claude Code are pointed to `CLAUDE.md`. The real-samples test asserts them and
+  `CLAUDE.md`'s required sections. Needs the matching `thecore` master, which carries the files.
 - The App application template also fetches `samples/devcontainer/github-accounts.sh` and makes it
   executable. `postCreateCommand` runs it: it makes git use the right forwarded SSH key for each
   GitHub account's remotes, so a developer with several accounts can push to all of them. The

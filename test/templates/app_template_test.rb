@@ -112,7 +112,10 @@ class AppTemplateTest < Minitest::Test
           "expected the #{cli} CLI config mount to be present but commented out")
       end
 
-      %w[.gitlab-ci.yml .github/workflows/ci.yml CLAUDE.md].each do |file|
+      %w[
+        .gitlab-ci.yml .github/workflows/ci.yml CLAUDE.md AGENTS.md
+        docs/agents/issue-tracker.md docs/agents/triage-labels.md docs/agents/domain.md
+      ].each do |file|
         destination = File.join(app_path, file)
         assert File.file?(destination), "expected #{file} to be fetched from thecore's samples"
         assert_equal File.read(File.join(SAMPLES_FIXTURE_DIR, file)), File.read(destination),
@@ -142,6 +145,7 @@ class AppTemplateTest < Minitest::Test
       assert status.success?, "`rails new -m app_template.rb` on #{samples_dir} failed:\n#{stdout}\n#{stderr}"
 
       assert_devcontainer_practices(app_path)
+      assert_agent_docs_practices(app_path)
       assert_docker_build_practices(app_path)
     end
   end
@@ -304,6 +308,87 @@ class AppTemplateTest < Minitest::Test
       "expected no root Dockerfile, so the Thecore build script uses the Thecore Dockerfile"
     refute File.exist?(File.join(app_path, "bin", "docker-entrypoint")),
       "expected no bin/docker-entrypoint (only the removed Rails Dockerfile runs it)"
+  end
+
+  AGENT_DOCS = %w[issue-tracker.md triage-labels.md domain.md].freeze
+  TRIAGE_LABELS = %w[needs-triage needs-info ready-for-agent ready-for-human wontfix].freeze
+  # Customer-specific practices of the pilot that must never reach a generic app.
+  CUSTOMER_SPECIFIC = /Odoo|Odooly|VPN|MS ?SQL|SQL Server|tiny_?tds|IMAS|Gamma|Bancolini/i
+
+  # The pilot's agent docs (thecore_devcontainer#13): docs/agents/ telling skills where
+  # tickets go, an AGENTS.md that only points to CLAUDE.md, and a CLAUDE.md stating the
+  # rules the pilot learned -- with none of the pilot's customer-specific content.
+  def assert_agent_docs_practices(app_path)
+    AGENT_DOCS.each do |doc|
+      assert File.file?(File.join(app_path, "docs", "agents", doc)), "expected docs/agents/#{doc} in the generated app"
+    end
+
+    tracker = File.read(File.join(app_path, "docs", "agents", "issue-tracker.md"))
+    assert_match(/git remote get-url origin/, tracker, "expected the issue tracker to be chosen from the git remote")
+    assert_match(/GitHub Issues/, tracker, "expected GitHub Issues as the tracker for a github.com remote")
+    assert_match(/GitLab Issues/, tracker, "expected GitLab Issues as the tracker for a GitLab remote")
+    assert_match(/`gh issue create/, tracker, "expected the gh commands for GitHub Issues")
+    assert_match(/`glab issue create/, tracker, "expected the glab commands for GitLab Issues")
+
+    labels = File.read(File.join(app_path, "docs", "agents", "triage-labels.md"))
+    TRIAGE_LABELS.each { |label| assert_includes labels, "`#{label}`", "expected the #{label} triage label" }
+
+    agents_md_path = File.join(app_path, "AGENTS.md")
+    assert File.file?(agents_md_path), "expected AGENTS.md in the generated app"
+    agents_md = File.read(agents_md_path)
+    assert_match(/CLAUDE\.md/, agents_md, "expected AGENTS.md to point to CLAUDE.md")
+    assert_operator agents_md.lines.count { |l| !l.strip.empty? }, :<=, 10,
+      "expected AGENTS.md to only point to CLAUDE.md, not duplicate it"
+
+    claude_md = File.read(File.join(app_path, "CLAUDE.md"))
+    atom = markdown_section(claude_md, "## Changing an ATOM")
+    ["vendor/submodules/", "git submodule add -b release/3", "release/3", "--conservative", "Gemfile.lock"].each do |step|
+      assert_includes atom, step, "expected \"Changing an ATOM\" to cover #{step}"
+    end
+
+    skills = markdown_section(claude_md, "## Agent skills")
+    %w[issue-tracker triage-labels domain].each do |doc|
+      assert_includes skills, "docs/agents/#{doc}.md", "expected \"Agent skills\" to point to docs/agents/#{doc}.md"
+    end
+
+    conventions = markdown_section(claude_md, "## Code conventions")
+    assert_match(/retr(y|ied)/i, conventions, "expected the no-job-retries rule")
+    assert_match(/serializable/i, conventions, "expected the serializable job arguments rule")
+    assert_match(/Base64/, conventions, "expected the Base64-for-binary job arguments rule")
+    assert_match(/Arel\.sql/, conventions, "expected the Arel.sql rule")
+    assert_match(/ThecoreSettings::Setting\.find_by/, conventions, "expected the settings-read-at-runtime rule")
+    assert_match(%r{vendor/deploytargets/.*SECRET_KEY_BASE|SECRET_KEY_BASE.*vendor/deploytargets/}m, claude_md,
+      "expected the no-secrets-in-vendor/deploytargets/ rule")
+
+    plugin = markdown_section(claude_md, "## Claude Code skills")
+    assert_match(/User-invoked only/, plugin, "expected the user-invoked skills listed")
+    assert_match(/Model-invocable/, plugin, "expected the model-invocable skills listed")
+
+    commands = markdown_section(claude_md, "## Common commands")
+    assert_includes commands, "thecore:atom", "expected thecore:atom among the common commands"
+    assert_includes commands, "thecore:collection_action", "expected thecore:collection_action among the common commands"
+
+    (["CLAUDE.md", "AGENTS.md"] + AGENT_DOCS.map { |d| "docs/agents/#{d}" }).each do |file|
+      refute_match CUSTOMER_SPECIFIC, File.read(File.join(app_path, file)), "#{file} carries customer-specific content"
+    end
+  end
+
+  # The text under a Markdown heading, up to the next heading of the same or higher level
+  # (a `#` line inside a fenced code block is a shell comment, not a heading).
+  def markdown_section(text, heading)
+    level = heading[/\A#+/].size
+    lines = text.lines
+    start = lines.index { |l| l.chomp == heading }
+    assert start, "expected a \"#{heading}\" section"
+    in_fence = false
+    section = [lines[start]]
+    lines[(start + 1)..].each do |line|
+      in_fence = !in_fence if line.start_with?("```")
+      break if !in_fence && line.match?(/\A\#{1,#{level}} /)
+
+      section << line
+    end
+    section.join
   end
 
   # devcontainer.json is JSONC: drops // and /* */ comments outside strings and
