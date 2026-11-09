@@ -66,6 +66,7 @@ module Thecore
       # versions) — not createATOM.js's stale "~> 3.1"/"~> 3.2".
       MODEL_DRIVEN_API_VERSION = "~> 3.9"
       THECORE_UI_RAILS_ADMIN_VERSION = "~> 3.8"
+      MINITEST_VERSION = "~> 5.25"
 
       # Faithful port of templates/createATOM/after_initialize.rb /
       # templates/createATOM/assets.rb in thecore_code_extension — static content,
@@ -136,6 +137,24 @@ module Thecore
                   gem build *.gemspec
                   gem push *.gem
       YAML
+
+      DUMMY_ABILITY_CONTENT = <<~RUBY
+        # The host app's Ability, which the Thecore engines reference. Permissions come from
+        # thecore_auth_commons' Role/Permission system, so this stays empty, as in a host app.
+        class Ability
+          include CanCan::Ability
+
+          def initialize(user); end
+        end
+      RUBY
+
+      DUMMY_DEVISE_CONTENT = <<~RUBY
+        Devise.setup do |config|
+          config.mailer_sender = "please-change-me@example.com"
+          require "devise/orm/active_record"
+          config.stretches = Rails.env.test? ? 1 : 12
+        end
+      RUBY
 
       SCAFFOLD_DIRECTORIES = %w[
         db/migrate
@@ -276,6 +295,18 @@ module Thecore
         RUBY
       end
 
+      # The host-app pieces the Thecore engines expect, which a `rails plugin new` dummy lacks:
+      # an `Ability` class (the App template gets it from `cancan:ability`) and Devise's ORM hook
+      # (`devise:install`), without which thecore_auth_commons' `User` hits `undefined method
+      # devise` at boot. Same files as the pilot ATOM's (mytask) dummy. Only with the API/Admin
+      # dependencies: without them neither CanCan nor Devise is in the bundle.
+      def configure_dummy_host_app
+        return unless @include_api_admin_deps
+
+        create_file File.join(atom_root, "test/dummy/app/models/ability.rb"), DUMMY_ABILITY_CONTENT
+        create_file File.join(atom_root, "test/dummy/config/initializers/devise.rb"), DUMMY_DEVISE_CONTENT
+      end
+
       # #create_file already `mkdir_p`s its own parent directory, so a separate
       # #empty_directory call per entry would just be redundant work (and, for the
       # 3 of these 12 that #create_scaffold_files/#create_locale_files/
@@ -289,7 +320,10 @@ module Thecore
         create_file File.join(atom_root, "config/initializers/add_to_db_migration.rb"),
           "Rails.application.config.paths['db/migrate'] << File.expand_path(\"../../db/migrate\", __dir__)\n"
         create_file File.join(atom_root, "config/initializers/assets.rb"), ASSETS_CONTENT
-        template "abilities.rb.tt", File.join(atom_root, "config/initializers/abilities.rb")
+        # CanCan comes with the API/Admin dependencies (model_driven_api -> thecore_auth_commons ->
+        # cancancan): without them `include CanCan::Ability` raises NameError at boot, and an ATOM
+        # outside the auth stack has no abilities to declare.
+        template "abilities.rb.tt", File.join(atom_root, "config/initializers/abilities.rb") if @include_api_admin_deps
         template "seeds.rb.tt", File.join(atom_root, "db/seeds.rb")
       end
 
@@ -332,9 +366,14 @@ module Thecore
         has_pg = File.read(File.join(destination_root, gemfile_path)).match?(/^\s*gem\s+["']pg["']/)
         gemfile_addition = +"\n"
         gemfile_addition << "gem 'pg'\n" unless has_pg
+        # Same pin as this gem's own Gemfile: Rails 7.2's test runner breaks on Minitest 6
+        # ("wrong number of arguments"). Recent 7.2 releases cap it themselves, but nothing else
+        # in the ATOM's lockfile-less bundle does (the --skip-api-admin-deps variant even floats
+        # to the newest Rails, where 5.x works too: checked on Rails 8.1).
+        gemfile_addition << "gem 'minitest', '#{MINITEST_VERSION}'\n"
         gemfile_addition << "gem 'model_driven_api', '#{MODEL_DRIVEN_API_VERSION}'\n" \
           "gem 'thecore_ui_rails_admin', '#{THECORE_UI_RAILS_ADMIN_VERSION}'\n" if @include_api_admin_deps
-        append_to_file gemfile_path, gemfile_addition unless gemfile_addition.strip.empty?
+        append_to_file gemfile_path, gemfile_addition
 
         return unless @include_api_admin_deps
 
