@@ -392,6 +392,20 @@ by loading the generated `boot.rb` in a clean `ruby` process with a development 
 Verified by hand once: a generated ATOM's `bin/rails test` under
 `DATABASE_URL=.../hostapp_development` ran on `<name>_test`.
 
+**A freshly generated ATOM passes its own tests, untouched** (thecore_devcontainer#21). Its setup
+is `bundle install`, `bin/rails db:create`, `bin/rails test`, with no edit in between. Three
+things used to break that. With the API/Admin dependencies, the Thecore engines expect two
+host-app pieces a plugin dummy lacks, so `configure_dummy_host_app` writes the pilot ATOM's
+(`mytask`) `test/dummy/app/models/ability.rb` (empty CanCan `Ability`, as `cancan:ability` gives a
+host app) and `test/dummy/config/initializers/devise.rb` (Devise's ORM hook, as `devise:install`
+does). Without them boot fails with `uninitialized constant Ability`, then `undefined method
+devise for User`. With `--skip-api-admin-deps` neither CanCan nor Devise is in the bundle, so
+those two files and `config/initializers/abilities.rb` (which includes `CanCan::Ability`) are not
+written. `setup_gemfile` always adds `gem 'minitest', '~> 5.25'`, the same pin as this gem's own
+Gemfile (Rails 7.2's runner breaks on Minitest 6). The ATOM has no lockfile, so the
+`--skip-api-admin-deps` variant resolves the newest Rails (8.1 at the time of writing); Minitest
+5 works there too.
+
 **Gemspec rewriting reads once, applies one in-memory pass of targeted substitutions, writes
 once** — not `createATOM.js`'s own blind "rewrite every line, branch on substring" approach
 (verified directly against a real `rails plugin new --full` gemspec, Rails 7.2.3.2, rather than
@@ -534,8 +548,14 @@ always has one; `Rails::Generators::Actions#gem`'s own `append_file_with_newline
 ever reaching it; the `CLAUDE.md`-fetch-failure test builds an `AtomGenerator` instance directly
 and calls `fetch_claude_md` on it, the same "construct the generator, call the one method under
 test" pattern `AssociationWiring`'s own test file already established, skipping the subprocess
-entirely) — no `bundle install`/test-run ever happens against the freshly generated dummy app,
-only file generation, so the whole file still runs in a couple of seconds.
+entirely). The two end-to-end tests (default and `--skip-api-admin-deps`) then run the generated
+ATOM's own setup and suite (`assert_generated_atom_tests_pass`: `bundle install`,
+`bin/rails db:create`, `bin/rails test` in the ATOM's own bundle, outside this gem's) and require
+at least one run with no failure. So they need network for `bundle install` and the same
+PostgreSQL as this gem's dummy app (`db`, or whatever `DATABASE_URL`/`PG*` name); with the gems
+already installed the file runs in about 15 seconds. Running it in a container as a non-root user
+whose `GEM_HOME` isn't writable, point `GEM_HOME` at a writable gem path too, or the ATOM's
+`bundle install` fails writing the gems' executables.
 
 ### `Thecore::Generators::CollectionActionGenerator` (`lib/generators/thecore/collection_action/collection_action_generator.rb`, thecore_generators#21, ADR 0006)
 
