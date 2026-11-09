@@ -1,5 +1,15 @@
 ## Unreleased
 
+- The App application template also fetches `samples/.github/workflows/security.yml`,
+  `samples/script/security_summary.rb` and `samples/test/script/security_summary_test.rb`
+  (thecore_devcontainer#9): a new app gets the pilot's security CI. On GitLab (`.gitlab-ci.yml`,
+  already fetched): SAST, Secret Detection, brakeman, bundler-audit failing only on the nightly
+  schedule, and a `security-summary` job running the script, all starting with the pipeline; the
+  schedule never builds, tests, lints or deploys. On GitHub: brakeman and bundler-audit (nightly
+  too) in their own workflow. The real-samples test (S1) asserts the jobs, the schedule
+  exclusions, the fetched script, `CLAUDE.md`'s "Security scanning" section, and runs the
+  script's test inside the generated app. Needs the matching `thecore` master, which carries the
+  files.
 - App template housekeeping (thecore_devcontainer#17). Security floors: `model_driven_api >=
   3.13.1`, `thecore_ui_rails_admin >= 3.8.7`, `thecore_backend_commons >= 3.9.1`,
   `thecore_auth_commons >= 3.6.3` (the last two get their own line only for the floor), and the
