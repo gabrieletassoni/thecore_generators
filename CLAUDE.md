@@ -788,16 +788,16 @@ happened.
 **Gemfile floors and pins (thecore_devcontainer#17)**: each floor is the first release carrying a
 fix the pilot (mytask-imas) depends on, so `bundle update --conservative` from an old lock can't
 stay below it: `model_driven_api >= 3.13.1`, `thecore_ui_rails_admin >= 3.8.7`,
-`thecore_backend_commons >= 3.9.1`, `thecore_auth_commons >= 3.6.3` (the last two are transitive
+`thecore_backend_commons >= 3.10`, `thecore_auth_commons >= 3.6.3` (the last two are transitive
 and get their own line only for the floor), and `rails >= 7.2.4`/`puma >= 7.2.1`, whose lines
 `rails new` already writes, so they're rewritten with `gsub_file` (a second `gem` line with a
 different requirement is a Bundler error). Two pins stay, each with its reason in the template:
 `redis < 6` (Action Cable 7.2's Redis adapter refuses redis 6 at load, and a fresh resolve takes
 6.0.0) and `connection_pool ~> 2.4` (Sidekiq <= 7.3.9 breaks on connection_pool 3 without capping
 it; drop the pin once `thecore_background_jobs` moves to Sidekiq 8). **Only raise a floor to a
-version published on RubyGems**: S1 runs a real `bundle lock`. `thecore_backend_commons`' floor
-goes to `>= 3.10` once 3.10.0 (no job retries by default, thecore_devcontainer#16) is released
-(thecore_devcontainer#23).
+version published on RubyGems**: S1 runs a real `bundle lock`. `thecore_backend_commons`' floor is
+3.10.0 (thecore_devcontainer#23): no job retries by default, failures set capped at 1,
+`THECORE_JOB_RETRIES`/`THECORE_FAILED_JOBS_KEPT` (thecore_devcontainer#16, #22).
 The "optional" commented block lists only gems not already in the bundle; `thecore_settings`,
 `thecore_background_jobs` and `thecore_ui_commons` are named as dependencies instead. S1 asserts
 the floors on the Gemfile's requirements and on the resolved lock (`assert_gem_floor_practices`).

@@ -396,7 +396,7 @@ for the full design and why the two stay separate).
   (`:development`). `thecore_generators` itself is added too, `group: :development` — so the
   generated app can immediately use every generator/task documented above without a manual
   Gemfile edit first.
-- **Security floors and pins** — `thecore_backend_commons >= 3.9.1` and `thecore_auth_commons >=
+- **Security floors and pins** — `thecore_backend_commons >= 3.10` and `thecore_auth_commons >=
   3.6.3` (transitive, listed for their floor), `rails >= 7.2.4`, `puma >= 7.2.1`, and the pins
   `redis < 6` (Action Cable 7.2) and `connection_pool ~> 2.4` (Sidekiq 7). Each carries its reason
   in a Gemfile comment.

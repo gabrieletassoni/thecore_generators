@@ -40,13 +40,14 @@ gem "sassc-rails"
 gem "model_driven_api", "~> 3.13", ">= 3.13.1"
 gem "thecore_ui_rails_admin", "~> 3.8", ">= 3.8.7"
 # Both already arrive as dependencies of the two gems above; listed only for their floors.
-#   - thecore_backend_commons 3.9.1: ActionCable verifies the JWT's signature and expiry
-#     (3.9.0 moved to roo 3, so rubyzip >= 3.4, CVE-2026-85396). Goes to ">= 3.10" once
-#     3.10.0 (no job retries by default, thecore_devcontainer#16) is on RubyGems
-#     (thecore_devcontainer#23).
+#   - thecore_backend_commons 3.10.0: no job is retried by default and only the latest
+#     failed job is kept (sidekiq-failures set capped at 1), so failing jobs can't fill
+#     Redis; THECORE_JOB_RETRIES / THECORE_FAILED_JOBS_KEPT change both per installation.
+#     It also carries 3.9.1's ActionCable JWT verification and 3.9.0's roo 3 (rubyzip
+#     >= 3.4, CVE-2026-85396).
 #   - thecore_auth_commons 3.6.3: OAuth login takes the identity only from OmniAuth's
 #     verified data, never from request params (3.6.2: no fixed initial admin password).
-gem "thecore_backend_commons", "~> 3.9", ">= 3.9.1"
+gem "thecore_backend_commons", "~> 3.10"
 gem "thecore_auth_commons", "~> 3.6", ">= 3.6.3"
 # `rails new` already declares rails and puma: their lines are rewritten, since a second
 # `gem` line with a different requirement is a Bundler error.

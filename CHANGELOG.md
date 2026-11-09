@@ -33,7 +33,7 @@
   script's test inside the generated app. Needs the matching `thecore` master, which carries the
   files.
 - App template housekeeping (thecore_devcontainer#17). Security floors: `model_driven_api >=
-  3.13.1`, `thecore_ui_rails_admin >= 3.8.7`, `thecore_backend_commons >= 3.9.1`,
+  3.13.1`, `thecore_ui_rails_admin >= 3.8.7`, `thecore_backend_commons >= 3.10`,
   `thecore_auth_commons >= 3.6.3` (the last two get their own line only for the floor), and the
   `rails`/`puma` lines `rails new` writes become `>= 7.2.4`/`>= 7.2.1`. `redis < 6` and
   `connection_pool ~> 2.4` are pinned, each with its reason in a comment: both are still needed
@@ -43,8 +43,10 @@
   dependencies anyway (now named as such), and `thecore_connectors`, which isn't on RubyGems. The
   stale comments about samples not yet on `thecore` master and helper scripts not written by
   Setup Devcontainer are gone. The real-samples test (S1) asserts the floors on the Gemfile and on a
-  real `bundle lock`. **To do once `thecore_backend_commons` 3.10.0 (no job retries by default,
-  thecore_devcontainer#16) is on RubyGems: raise its floor to `>= 3.10` (thecore_devcontainer#23).**
+  real `bundle lock`. `thecore_backend_commons >= 3.10` (thecore_devcontainer#23): a new app gets
+  3.10.0's job defaults (no job retries, failures set capped at 1, `THECORE_JOB_RETRIES` /
+  `THECORE_FAILED_JOBS_KEPT`; thecore_devcontainer#16, #22) along with 3.9.1's ActionCable JWT
+  verification.
 - The App application template also fetches `samples/AGENTS.md` and
   `samples/docs/agents/{issue-tracker,triage-labels,domain}.md` (thecore_devcontainer#13): a new
   app's agents find the tracker (GitHub Issues or GitLab Issues, picked from the git remote), the

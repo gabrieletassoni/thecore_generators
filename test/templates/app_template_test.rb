@@ -458,7 +458,7 @@ class AppTemplateTest < Minitest::Test
     "puma" => %w[7.2.1 7.2.0], # PROXY protocol v1 CVE-2026-47736/47737
     "model_driven_api" => %w[3.13.1 3.13.0], # the API never instantiates the class named by the path
     "thecore_auth_commons" => %w[3.6.3 3.6.2], # OAuth takes the identity only from OmniAuth
-    "thecore_backend_commons" => %w[3.9.1 3.9.0], # ActionCable JWT verification (3.9.0: rubyzip CVE)
+    "thecore_backend_commons" => %w[3.10.0 3.9.1], # no job retries by default, failures set capped at 1
     "thecore_ui_rails_admin" => %w[3.8.7 3.8.6] # RailsAdmin's User create form answered 500 under Devise 5
   }.freeze
   # Action Cable 7.2's Redis adapter requires `redis >= 4, < 6` when it loads.
