@@ -49,6 +49,11 @@ module Thecore
               "(only consulted with --non-interactive; interactively this is its " \
               "own yes/no prompt, default yes)"
 
+      class_option :gem_host, type: :string, default: "rubygems.org",
+        desc: "Where the ATOM's gem is published: rubygems.org (the default, as for the base " \
+              "thecore_* gems) or a private gem server's host name (e.g. gems.example.com). Sets the " \
+              "gemspec's allowed_push_host and the GitLab CI's push target to match"
+
       source_root File.expand_path("templates", __dir__)
 
       # Validated the same way as createATOM.js's own six prompts: every field must
@@ -67,6 +72,10 @@ module Thecore
       MODEL_DRIVEN_API_VERSION = "~> 3.9"
       THECORE_UI_RAILS_ADMIN_VERSION = "~> 3.8"
       MINITEST_VERSION = "~> 5.25"
+      # Thecore 3 hosts run Rails 7.2. The ATOM commits no lockfile, so without this its own bundle
+      # (with --skip-api-admin-deps nothing else holds Rails back) resolves the newest Rails.
+      RAILS_VERSION = "~> 7.2"
+      GEM_HOST_PATTERN = /\A[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d+)?\z/i
 
       # Faithful port of templates/createATOM/after_initialize.rb /
       # templates/createATOM/assets.rb in thecore_code_extension — static content,
@@ -101,7 +110,10 @@ module Thecore
       # close to the original's structure as the fix allows.
       GEMPUSH_YML_CONTENT = <<~YAML
         name: Ruby Gem
-        on: push
+        on:
+          push:
+            branches:
+              - release/3
         jobs:
           build:
             name: Build + Publish
@@ -136,6 +148,13 @@ module Thecore
                   printf -- "---\\n:rubygems_api_key: ${GEM_HOST_API_KEY}\\n" > $HOME/.gem/credentials
                   gem build *.gemspec
                   gem push *.gem
+      YAML
+
+      GITLAB_CI_HEADER = <<~YAML
+        # Publish: build_gem builds and pushes the gem only when lib/*/version.rb changes (see
+        # CLAUDE.md). Security: SAST and Secret Detection report only; security-summary lists their
+        # findings and turns orange when there are any. CVEs in the dependencies are checked by the
+        # host app's bundler-audit, since this gem commits no Gemfile.lock.
       YAML
 
       DUMMY_ABILITY_CONTENT = <<~RUBY
@@ -211,6 +230,14 @@ module Thecore
         raise Thor::Error,
           "#{atom_root} already exists - choose a different name, or remove it first if you " \
           "really mean to regenerate it."
+      end
+
+      def validate_gem_host!
+        return if gem_host.match?(GEM_HOST_PATTERN)
+
+        raise Thor::Error,
+          "--gem-host=#{options[:gem_host]} is not a gem server host name - pass only the host " \
+          "(e.g. gems.example.com), or leave it out to publish on rubygems.org."
       end
 
       def validate_non_interactive_options!
@@ -338,25 +365,25 @@ module Thecore
         create_file File.join(atom_root, "config/locales/it.yml"), "it:\n"
       end
 
+      # The real ATOMs' publish CI. GitHub (base gems): gempush.yml publishes to RubyGems from
+      # release/3 only. GitLab (spot gems, mytask's .gitlab-ci.yml): build_gem runs
+      # gem-compile.sh only when lib/*/version.rb changes, never on a tag. gem-compile.sh pushes
+      # to GITLAB_GEM_REPO_TARGET, or to RubyGems when it's unset, so the variable is written only
+      # for a private gem host: an "https://${GEM_HOST}/" with an empty variable would be
+      # "https:///", which is set. SAST and Secret Detection report only; on GitLab CE they stay
+      # green whatever they find, so security-summary runs script/security_summary.rb (fetched
+      # from thecore's samples by #fetch_security_summary) on their reports.
       def create_ci_files
         create_file File.join(atom_root, ".github/workflows/gempush.yml"), GEMPUSH_YML_CONTENT
+        create_file File.join(atom_root, ".gitlab-ci.yml"), GITLAB_CI_HEADER + gitlab_ci.to_yaml.delete_prefix("---\n")
+      end
 
-        gitlab_ci = {
-          "image" => "gabrieletassoni/vscode-devcontainers-thecore:3",
-          "variables" => {
-            "GITLAB_EMAIL" => @email,
-            "GITLAB_USER_NAME" => @author,
-            "GITLAB_GEM_REPO_TARGET" => 'https://${GEM_HOST}/',
-            "GEM_HOST_API_KEY" => '${GEMS_REPO_CREDENTIALS}',
-          },
-          "stages" => %w[build release],
-          "build_gem" => {
-            "rules" => [{ "if" => "$CI_COMMIT_TAG", "when" => "never" }, { "when" => "always" }],
-            "stage" => "build",
-            "script" => ["/usr/bin/gem-compile.sh"],
-          },
-        }
-        create_file File.join(atom_root, ".gitlab-ci.yml"), gitlab_ci.to_yaml
+      def fetch_security_summary
+        %w[script/security_summary.rb test/script/security_summary_test.rb].each do |file|
+          Thecore::Generators::SampleFetcher.fetch_thecore_sample(
+            self, file, File.join(atom_root, file), label: "the thecore:atom generator"
+          )
+        end
       end
 
       def setup_gemfile
@@ -410,12 +437,13 @@ module Thecore
         content = content.sub(/^\s*spec\.homepage\s*=.*$/, "  spec.homepage    = #{@url.to_s.inspect}")
         content = content.sub(/^\s*spec\.summary\s*=.*$/, "  spec.summary     = #{@summary.to_s.inspect}")
         content = content.sub(/^\s*spec\.description\s*=.*$/, "  spec.description = #{@description.to_s.inspect}")
+        content = content.sub(/^(\s*spec\.add_dependency\s+["']rails["']).*$/) { "#{Regexp.last_match(1)}, #{RAILS_VERSION.inspect}" }
         content = content.sub(/^\s*spec\.metadata\["allowed_push_host"\]\s*=.*$/,
-          '  spec.metadata["allowed_push_host"] = "https://rubygems.org"')
+          "  spec.metadata[\"allowed_push_host\"] = \"https://#{gem_host}\"")
         content = content.sub(/^\s*spec\.metadata\["source_code_uri"\]\s*=.*$/,
           '  spec.metadata["source_code_uri"] = spec.homepage')
         content = content.sub(/^\s*spec\.metadata\["changelog_uri"\]\s*=.*$/,
-          '  spec.metadata["changelog_uri"] = "#{spec.homepage}/blob/master/CHANGELOG.md"')
+          '  spec.metadata["changelog_uri"] = "#{spec.homepage}/blob/release/3/CHANGELOG.md"')
 
         create_file gemspec_path, content, force: true
       end
@@ -465,7 +493,7 @@ module Thecore
       def git_init_and_commit
         atom_path = File.join(destination_root, atom_root)
         committed = inside(atom_root) do
-          run("git init -q -b master", abort_on_failure: true)
+          run("git init -q -b release/3", abort_on_failure: true)
           run("git add -A", abort_on_failure: true)
           # Not abort_on_failure: a freshly-generated tree always has something to
           # commit in normal use, but `git commit` failing (e.g. "nothing to
@@ -485,13 +513,14 @@ module Thecore
           say_status :next_steps, <<~MSG.strip, :yellow
             #{file_name} is git-initialized locally with one commit, but has no remote yet. To finish wiring it in:
               1. Create a repository for it on the git host of your choice (GitHub, GitLab, ...)
-              2. cd #{atom_path} && git remote add origin <remote-url> && git push -u origin master
+              2. cd #{atom_path} && git remote add origin <remote-url> && git push -u origin release/3
               3. From this app's root: git submodule add -b release/3 <remote-url> vendor/submodules/#{file_name}
             Until the gem is published, this app's Gemfile uses it from the submodule:
               gem "#{file_name}", path: "vendor/submodules/#{file_name}"
             Once published (bump lib/#{file_name}/version.rb and push to release/3; the CI publishes it), switch to the published gem:
-              4. Replace that line with gem "#{file_name}", "~> <major.minor>" (inside the `source "https://<gem-host>/" do` block if it's on a private gem server)
+              4. Replace that line with gem "#{file_name}", "~> <major.minor>"#{published_gem_location}
               5. bundle update #{file_name} --conservative, then commit Gemfile.lock together with the submodule pointer
+            Its own tests run from its directory, on its own test database: cd #{atom_path} && bundle install && bin/rails db:create && bin/rails test
             From then on every change follows the same loop: edit and test in vendor/submodules/#{file_name}, bump the version, push to release/3, wait for the gem server, bundle update #{file_name} --conservative, commit Gemfile.lock + the submodule pointer.
           MSG
         else
@@ -525,6 +554,60 @@ module Thecore
       end
 
       private
+
+      def gitlab_ci
+        variables = { "GITLAB_EMAIL" => @email, "GITLAB_USER_NAME" => @author }
+        variables["GITLAB_GEM_REPO_TARGET"] = "https://#{gem_host}/" unless rubygems_host?
+        variables["GEM_HOST_API_KEY"] = "${GEMS_REPO_CREDENTIALS}"
+        {
+          "image" => "gabrieletassoni/vscode-devcontainers-thecore:3",
+          "variables" => variables,
+          "stages" => %w[test build],
+          "build_gem" => {
+            "rules" => [
+              { "if" => "$CI_COMMIT_TAG", "when" => "never" },
+              { "changes" => ["lib/*/version.rb"], "when" => "on_success" },
+              { "when" => "never" },
+            ],
+            "stage" => "build",
+            "script" => ["/usr/bin/gem-compile.sh"],
+          },
+          "include" => [
+            { "template" => "Jobs/SAST.gitlab-ci.yml" },
+            { "template" => "Jobs/Secret-Detection.gitlab-ci.yml" },
+          ],
+          "semgrep-sast" => {
+            "needs" => [],
+            "variables" => { "SAST_EXCLUDED_PATHS" => "spec, test, tests, tmp, vendor, node_modules" },
+          },
+          "secret_detection" => { "needs" => [] },
+          "security-summary" => {
+            "stage" => "test",
+            "needs" => [
+              { "job" => "semgrep-sast", "optional" => true },
+              { "job" => "secret_detection", "optional" => true },
+            ],
+            "allow_failure" => true,
+            "rules" => [{ "if" => '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH' }],
+            "script" => ["ruby script/security_summary.rb gl-sast-report.json gl-secret-detection-report.json"],
+          },
+        }
+      end
+
+      # --gem-host, tolerating a scheme and a trailing slash (a URL copied from a browser).
+      def gem_host
+        options[:gem_host].to_s.strip.sub(%r{\Ahttps?://}i, "").chomp("/").downcase
+      end
+
+      def published_gem_location
+        return "" if rubygems_host?
+
+        %( inside the `source "https://#{gem_host}/" do ... end` block)
+      end
+
+      def rubygems_host?
+        gem_host == "rubygems.org"
+      end
 
       def atom_root
         File.join("vendor", "submodules", file_name)

@@ -403,8 +403,28 @@ devise for User`. With `--skip-api-admin-deps` neither CanCan nor Devise is in t
 those two files and `config/initializers/abilities.rb` (which includes `CanCan::Ability`) are not
 written. `setup_gemfile` always adds `gem 'minitest', '~> 5.25'`, the same pin as this gem's own
 Gemfile (Rails 7.2's runner breaks on Minitest 6). The ATOM has no lockfile, so the
-`--skip-api-admin-deps` variant resolves the newest Rails (8.1 at the time of writing); Minitest
-5 works there too.
+`--skip-api-admin-deps` variant used to resolve the newest Rails (8.1); `setup_gemspec` now writes
+`spec.add_dependency "rails", "~> 7.2"` (`RAILS_VERSION`, the Rails of Thecore 3 hosts), and the
+`--skip-api-admin-deps` test checks that the ATOM's `Gemfile.lock` resolves Rails 7.2.
+
+**It publishes like the real ATOMs** (thecore_devcontainer#14). The repository starts on
+`release/3` (`git init -b release/3`, and the next steps push to it), the only branch that
+publishes. `gempush.yml` (GitHub, RubyGems) runs only on pushes to `release/3`, as in
+`model_driven_api`. `.gitlab-ci.yml` (`create_ci_files`, built by the private `gitlab_ci`) follows
+the pilot's spot ATOM (`mytask`): `build_gem` runs the image's `gem-compile.sh` only when
+`lib/*/version.rb` changes and never on a tag; it includes GitLab's `Jobs/SAST` and
+`Jobs/Secret-Detection` templates (`needs: []`), and `security-summary` (`allow_failure`, scanner
+needs optional) runs `ruby script/security_summary.rb gl-sast-report.json
+gl-secret-detection-report.json`. `fetch_security_summary` gets that script and its test
+(`test/script/security_summary_test.rb`, plain Minitest, picked up by `bin/rails test`) from
+`thecore`'s samples through `SampleFetcher`, like `ATOM_CLAUDE.md`. `--gem-host=HOST` (default
+`rubygems.org`; a scheme and trailing slash are stripped, anything that isn't a host name or
+`host:port` is refused by `validate_gem_host!` before `rails plugin new` runs) sets the gemspec's
+`allowed_push_host` to `https://HOST` and, for a host other than RubyGems,
+`GITLAB_GEM_REPO_TARGET: https://HOST/`. With RubyGems the variable is left out: `gem-compile.sh`
+falls back to RubyGems only when it is unset, and the old `https://${GEM_HOST}/` was `https:///`
+with an empty `GEM_HOST`. The next steps then name the host's `source "https://HOST/" do` block,
+and give the ATOM's test sequence (`bundle install && bin/rails db:create && bin/rails test`).
 
 **Gemspec rewriting reads once, applies one in-memory pass of targeted substitutions, writes
 once** — not `createATOM.js`'s own blind "rewrite every line, branch on substring" approach
@@ -486,7 +506,7 @@ calls the shared module directly, `require`d like any other file here.
 
 **`git_init_and_commit`** — `-fG` (`rails plugin new`'s own force+skip-git flags) means no git
 repo exists yet at this point. This generator narrows that gap, per ADR 0006, without fully
-closing it: a local `git init -b master` + one commit (authored as the `--author`/`--email` the
+closing it: a local `git init -b release/3` + one commit (authored as the `--author`/`--email` the
 generator just collected, via `-c user.name=.../-c user.email=...` rather than relying on
 whatever global git config happens to be present), then `say_status`-logs the exact
 `git remote add`/`git submodule add -b release/3` follow-up commands, then the rest of the
@@ -543,9 +563,9 @@ plumbing, since `Thor::Actions#run`'s `system` call inherits the parent process'
 default. `setup` also writes a minimal stub `Gemfile` at `destination_root` (a real host app
 always has one; `Rails::Generators::Actions#gem`'s own `append_file_with_newline` call in
 `add_gem_to_host_gemfile` errors on a missing file otherwise) and pre-creates `vendor/submodules`
-(the generator's own first guard check requires it). Only 3 of the file's 8 tests actually reach
-`create_rails_engine`'s real `rails plugin new` subprocess (the guard-check tests fail before
-ever reaching it; the `CLAUDE.md`-fetch-failure test builds an `AtomGenerator` instance directly
+(the generator's own first guard check requires it). Only 3 of the file's 10 tests (4 with `THECORE_REAL_SAMPLES_DIR` set) actually reach
+`create_rails_engine`'s real `rails plugin new` subprocess (the guard-check and `--gem-host` tests fail
+before ever reaching it; the `CLAUDE.md`-fetch-failure test builds an `AtomGenerator` instance directly
 and calls `fetch_claude_md` on it, the same "construct the generator, call the one method under
 test" pattern `AssociationWiring`'s own test file already established, skipping the subprocess
 entirely). The two end-to-end tests (default and `--skip-api-admin-deps`) then run the generated
@@ -1048,12 +1068,16 @@ Key test files:
 - `test/generators/thecore/atom_generator_test.rb` — `thecore:atom`'s own guard checks (missing
   `vendor/submodules`, an invalid/shell-unsafe name, an already-existing `vendor/submodules/
   <name>`, missing `--non-interactive` flags — none of these reach the real `rails plugin new`
-  subprocess), one full end-to-end generation each for the default (API/Admin deps included) and
-  `--skip-api-admin-deps` paths (the only two tests that do reach it — the former's own
+  subprocess, nor does an invalid `--gem-host`), one full end-to-end generation each for the
+  default (API/Admin deps included, RubyGems) and `--skip-api-admin-deps` (with a private
+  `--gem-host`) paths (the only two tests that do reach it — the former's own
   assertions include the `CLAUDE.md` fetch, byte-for-byte against the fixture, same fixture
   directory `test/templates/app_template_test.rb` already uses via `THECORE_SAMPLES_SOURCE`), a
   Gemfile-collision case (an existing `gem "tcp_debugger", ...` line in the host Gemfile is never
-  duplicated — also a full run), and the `CLAUDE.md` fetch's own failure/abort message, tested by
+  duplicated — also a full run), S2 on `thecore`'s real samples (skipped unless
+  `THECORE_REAL_SAMPLES_DIR` names a `samples/` folder, as in the App template's S1: the ATOM's
+  `CLAUDE.md` has the test sequence, "Publishing" and "Security scanning", and the security
+  summary's test passes inside the ATOM via `bin/rails test`), and the `CLAUDE.md` fetch's own failure/abort message, tested by
   building an `AtomGenerator` instance directly and calling `fetch_claude_md` on it rather than
   `run_generator`ing the whole pipeline — the same "construct the generator, call the one method
   under test" pattern `AssociationWiring`'s own test file already established, skipping the
