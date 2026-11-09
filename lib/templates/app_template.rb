@@ -42,7 +42,8 @@ gem "thecore_ui_rails_admin", "~> 3.8", ">= 3.8.7"
 # Both already arrive as dependencies of the two gems above; listed only for their floors.
 #   - thecore_backend_commons 3.9.1: ActionCable verifies the JWT's signature and expiry
 #     (3.9.0 moved to roo 3, so rubyzip >= 3.4, CVE-2026-85396). Goes to ">= 3.10" once
-#     3.10.0 (no job retries by default, thecore_devcontainer#16) is on RubyGems.
+#     3.10.0 (no job retries by default, thecore_devcontainer#16) is on RubyGems
+#     (thecore_devcontainer#23).
 #   - thecore_auth_commons 3.6.3: OAuth login takes the identity only from OmniAuth's
 #     verified data, never from request params (3.6.2: no fixed initial admin password).
 gem "thecore_backend_commons", "~> 3.9", ">= 3.9.1"

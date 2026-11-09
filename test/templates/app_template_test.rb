@@ -159,6 +159,7 @@ class AppTemplateTest < Minitest::Test
       assert_docker_build_practices(app_path)
       assert_security_ci_practices(app_path)
       assert_gem_floor_practices(app_path)
+      assert_github_workflow_practices(app_path)
     end
   end
 
@@ -266,6 +267,27 @@ class AppTemplateTest < Minitest::Test
       "expected postCreateCommand to run the multi-GitHub-account script"
 
     assert_host_paths_created_before_heal(devcontainer)
+
+    # Every container process runs as the dev user, not root (root-owned binstubs break bundle).
+    compose = YAML.safe_load(File.read(File.join(app_path, ".devcontainer", "docker-compose.yml")), aliases: true)
+    app_service = compose.dig("services", devcontainer["service"])
+    refute_nil app_service, "expected docker-compose.yml to define the #{devcontainer["service"]} service"
+    assert_equal "vscode", app_service["user"], "expected the app service to run as user vscode"
+  end
+
+  # Top-level keys GitHub Actions accepts in a workflow file; any other key (such as a
+  # docker-compose style `x-...` anchor holder) makes GitHub reject the whole workflow.
+  GITHUB_WORKFLOW_KEYS = %w[name run-name on permissions env defaults concurrency jobs].freeze
+
+  def assert_github_workflow_practices(app_path)
+    workflows = Dir[File.join(app_path, ".github", "workflows", "*.{yml,yaml}")]
+    refute_empty workflows, "expected the generated app to carry GitHub workflows"
+    workflows.each do |path|
+      # Psych reads a bare `on:` key as `true`.
+      keys = YAML.safe_load(File.read(path), aliases: true).keys.map { |key| key == true ? "on" : key.to_s }
+      assert_empty keys - GITHUB_WORKFLOW_KEYS,
+        "#{File.basename(path)} has top-level keys GitHub Actions rejects"
+    end
   end
 
   HEAL_CALL = "bash .devcontainer/heal-stale-containers.sh '${localWorkspaceFolder}'"
