@@ -384,11 +384,14 @@ itself, so `gempush.yml`/`.gitlab-ci.yml` (`create_ci_files`) are the ATOM's onl
 with the pilot ATOM's (`mytask`) shape: server from `PG*` env vars defaulting to `db`, databases
 `<name>_<env>`. `force_atom_database_under_database_url` appends the test-database rule to the
 dummy's `config/boot.rb`: when `DATABASE_URL` is set it keeps only the server/credentials and
-forces `<name>_<RAILS_ENV>`. It's in `boot.rb`, as in the pilot, not in `test/test_helper.rb`,
+forces `<name>_<RAILS_ENV>`, with `URI` like the App template's test helper (the earlier regex
+on the path turned a server-only URL such as `postgres://u:p@db:5432` into
+`postgres://<name>_test`, dropping the host). It's in `boot.rb`, as in the pilot, not in `test/test_helper.rb`,
 so every entry point is covered (the test helper, which sets `RAILS_ENV=test` before booting,
 `bin/rails db:*`, the `db:test:prepare` subprocess). `setup_gemfile` no longer appends `pg` when
 the Gemfile already declares it (Bundler rejects a gem declared twice). The test checks the rule
-by loading the generated `boot.rb` in a clean `ruby` process with a development `DATABASE_URL`.
+by loading the generated `boot.rb` in a clean `ruby` process with a development `DATABASE_URL`
+and with a server-only one.
 Verified by hand once: a generated ATOM's `bin/rails test` under
 `DATABASE_URL=.../hostapp_development` ran on `<name>_test`.
 
@@ -423,7 +426,11 @@ gl-secret-detection-report.json`. `fetch_security_summary` gets that script and 
 `allowed_push_host` to `https://HOST` and, for a host other than RubyGems,
 `GITLAB_GEM_REPO_TARGET: https://HOST/`. With RubyGems the variable is left out: `gem-compile.sh`
 falls back to RubyGems only when it is unset, and the old `https://${GEM_HOST}/` was `https:///`
-with an empty `GEM_HOST`. The next steps then name the host's `source "https://HOST/" do` block,
+with an empty `GEM_HOST`. `gempush.yml` (`gempush_yml`) follows the same host: with RubyGems it
+is unchanged (`RUBYGEMS_AUTH_TOKEN` secret, `gem push *.gem`); with another host it runs
+`gem push --host https://HOST *.gem` with `GEM_HOST_API_KEY` from the `GEMS_REPO_CREDENTIALS`
+repository secret (the GitLab variable's name), since RubyGems would refuse a gem whose
+`allowed_push_host` names another server. The next steps then name the host's `source "https://HOST/" do` block,
 and give the ATOM's test sequence (`bundle install && bin/rails db:create && bin/rails test`).
 
 **Gemspec rewriting reads once, applies one in-memory pass of targeted substitutions, writes
@@ -789,7 +796,8 @@ different requirement is a Bundler error). Two pins stay, each with its reason i
 6.0.0) and `connection_pool ~> 2.4` (Sidekiq <= 7.3.9 breaks on connection_pool 3 without capping
 it; drop the pin once `thecore_background_jobs` moves to Sidekiq 8). **Only raise a floor to a
 version published on RubyGems**: S1 runs a real `bundle lock`. `thecore_backend_commons`' floor
-goes to `>= 3.10` once 3.10.0 (no job retries by default, thecore_devcontainer#16) is released.
+goes to `>= 3.10` once 3.10.0 (no job retries by default, thecore_devcontainer#16) is released
+(thecore_devcontainer#23).
 The "optional" commented block lists only gems not already in the bundle; `thecore_settings`,
 `thecore_background_jobs` and `thecore_ui_commons` are named as dependencies instead. S1 asserts
 the floors on the Gemfile's requirements and on the resolved lock (`assert_gem_floor_practices`).

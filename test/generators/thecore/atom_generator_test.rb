@@ -105,6 +105,9 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     # uses the ATOM's own test database, so running the tests never touches development data.
     assert_equal "postgres://postgres:postgres@db:5432/tcp_debugger_test?sslmode=disable",
       database_url_seen_by_dummy_boot(atom, "postgres://postgres:postgres@db:5432/myapp_development?sslmode=disable")
+    # A URL naming only the server (the CI samples' form) keeps its host and gains the database.
+    assert_equal "postgres://postgres:postgres@db:5432/tcp_debugger_test",
+      database_url_seen_by_dummy_boot(atom, "postgres://postgres:postgres@db:5432")
     assert_file "#{atom}/test/test_helper.rb" do |content|
       assert_operator content.index('ENV["RAILS_ENV"] = "test"'), :<,
         content.index("require_relative \"../test/dummy/config/environment\""),
@@ -184,6 +187,10 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
       assert_match(/echo "version_exists=false" >> "\$GITHUB_ENV"/, content)
       assert_match(/if: env\.version_exists == 'false'/, content)
     end
+    # No --gem-host: GitHub publishes to RubyGems, with the RubyGems token.
+    publish = gempush_publish_step(atom)
+    assert_match(/^gem push \*\.gem$/, publish["run"])
+    assert_equal "${{secrets.RUBYGEMS_AUTH_TOKEN}}", publish.dig("env", "GEM_HOST_API_KEY")
     assert_file "#{atom}/.gitlab-ci.yml" do |content|
       data = YAML.safe_load(content)
       assert_equal "dev@alchemic.it", data["variables"]["GITLAB_EMAIL"]
@@ -250,6 +257,11 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
       assert_equal "https://gems.example.com/", YAML.safe_load(content).dig("variables", "GITLAB_GEM_REPO_TARGET")
     end
     assert_includes output, 'source "https://gems.example.com/" do'
+    # The GitHub workflow publishes to the same host allowed_push_host names, never to RubyGems.
+    publish = gempush_publish_step(atom)
+    assert_match(%r{^gem push --host https://gems\.example\.com \*\.gem$}, publish["run"])
+    assert_equal "${{secrets.GEMS_REPO_CREDENTIALS}}", publish.dig("env", "GEM_HOST_API_KEY")
+    refute_match(/rubygems/i, publish.to_s)
 
     # Scaffold Files/directories are still created regardless of this choice.
     assert_file "#{atom}/config/initializers/after_initialize.rb"
@@ -356,6 +368,12 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
 
   def restore_samples_source!
     ENV["THECORE_SAMPLES_SOURCE"] = @original_samples_source
+  end
+
+  # The step of the generated GitHub workflow that runs `gem push`.
+  def gempush_publish_step(atom)
+    gempush = YAML.safe_load(File.read(File.join(destination_root, atom, ".github/workflows/gempush.yml")))
+    gempush.dig("jobs", "build", "steps").find { |step| step["run"].to_s.include?("gem push") }
   end
 
   # Runs the generated dummy app's config/boot.rb in a clean Ruby process, as the test

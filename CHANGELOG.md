@@ -1,5 +1,13 @@
 ## Unreleased
 
+- `thecore:atom` with `--gem-host` other than RubyGems: the generated `gempush.yml` now pushes to
+  that host (`gem push --host https://HOST *.gem`, key from the `GEMS_REPO_CREDENTIALS` repository
+  secret) instead of RubyGems, which refused the gem since `allowed_push_host` names the other
+  host. With the default host the workflow is unchanged.
+- `thecore:atom`'s test-database rule in the dummy's `config/boot.rb` uses `URI`, like the App
+  template: on a `DATABASE_URL` naming only the server (`postgres://u:p@db:5432`) the old regex
+  replaced the host with the database name.
+
 - `thecore:atom` publishes like the real ATOMs (thecore_devcontainer#14). The ATOM's repository
   starts on `release/3`, and the next steps push there. `gempush.yml` runs only on pushes to
   `release/3`. `.gitlab-ci.yml` builds the gem only when `lib/*/version.rb` changes (never on a
@@ -36,7 +44,7 @@
   stale comments about samples not yet on `thecore` master and helper scripts not written by
   Setup Devcontainer are gone. The real-samples test (S1) asserts the floors on the Gemfile and on a
   real `bundle lock`. **To do once `thecore_backend_commons` 3.10.0 (no job retries by default,
-  thecore_devcontainer#16) is on RubyGems: raise its floor to `>= 3.10`.**
+  thecore_devcontainer#16) is on RubyGems: raise its floor to `>= 3.10` (thecore_devcontainer#23).**
 - The App application template also fetches `samples/AGENTS.md` and
   `samples/docs/agents/{issue-tracker,triage-labels,domain}.md` (thecore_devcontainer#13): a new
   app's agents find the tracker (GitHub Issues or GitLab Issues, picked from the git remote), the
