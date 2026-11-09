@@ -84,14 +84,14 @@ class AppTemplateTest < Minitest::Test
       # coincidentally matched; equality can't.
       %w[
         devcontainer.json docker-compose.yml Dockerfile create-db-user.sql
-        link-host-home.sh check-plugins.sh
+        link-host-home.sh check-plugins.sh heal-stale-containers.sh
       ].each do |file|
         destination = File.join(app_path, ".devcontainer", file)
         assert File.file?(destination), "expected .devcontainer/#{file} to be fetched from thecore's samples"
         assert_equal File.read(File.join(SAMPLES_FIXTURE_DIR, "devcontainer", file)), File.read(destination),
           "expected the fetched .devcontainer/#{file} to match the fixture byte-for-byte"
       end
-      %w[link-host-home.sh check-plugins.sh].each do |script|
+      %w[link-host-home.sh check-plugins.sh heal-stale-containers.sh].each do |script|
         mode = File.stat(File.join(app_path, ".devcontainer", script)).mode
         assert (mode & 0o111).positive?, "expected .devcontainer/#{script} to be executable"
       end

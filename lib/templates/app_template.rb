@@ -108,7 +108,7 @@ TEXT
 # today.
 #
 # Every write below is unconditional (`force: true`, no interactive prompt).
-# Of the six `.devcontainer/*` files, four (`devcontainer.json`,
+# Of the seven `.devcontainer/*` files, four (`devcontainer.json`,
 # `docker-compose.yml`, `Dockerfile`, `create-db-user.sql`) are expected to
 # already exist, written by the separate, prior "Setup Devcontainer" bootstrap
 # step this template runs inside of (verified directly against that command's
@@ -116,7 +116,10 @@ TEXT
 # them is the whole point, not a conflict to ask about. The other two
 # (`link-host-home.sh`/`check-plugins.sh`) are *not* written by that step at
 # all — genuinely new files here, not overwrites — but `force: true` is harmless
-# for a new file and keeps every write in this block uniform.
+# for a new file and keeps every write in this block uniform. The seventh,
+# `heal-stale-containers.sh` (run by `initializeCommand`, ADR 0005 in
+# thecore_devcontainer), is written by that step only from the extension
+# release after 3.10.0, so it may be either.
 # `.gitlab-ci.yml`/`CLAUDE.md` don't exist yet in the documented flow either,
 # but stay unconditional too so re-running this template later
 # (`bin/rails app:template`) is a clean overwrite, not a prompt.
@@ -142,15 +145,17 @@ rescue StandardError => e
     "-- aborting the app template. Set THECORE_SAMPLES_SOURCE to override the source.")
 end
 
-%w[devcontainer.json docker-compose.yml Dockerfile create-db-user.sql link-host-home.sh check-plugins.sh].each do |file|
+%w[devcontainer.json docker-compose.yml Dockerfile create-db-user.sql link-host-home.sh check-plugins.sh
+   heal-stale-containers.sh].each do |file|
   fetch_thecore_sample("devcontainer/#{file}", ".devcontainer/#{file}")
 end
 # `get`/`create_file` only write content, never permissions — the executable bit
-# has to be restored explicitly for the two scripts (`thecore/samples/devcontainer/`
+# has to be restored explicitly for the three scripts (`thecore/samples/devcontainer/`
 # stores them executable, but that's lost the moment their bytes cross an HTTP
 # fetch or a plain `File.read`).
 chmod ".devcontainer/link-host-home.sh", 0o755
 chmod ".devcontainer/check-plugins.sh", 0o755
+chmod ".devcontainer/heal-stale-containers.sh", 0o755
 
 fetch_thecore_sample(".gitlab-ci.yml", ".gitlab-ci.yml")
 # thecore_generators#25 (ADR 0007): fetched unconditionally, alongside .gitlab-ci.yml above --

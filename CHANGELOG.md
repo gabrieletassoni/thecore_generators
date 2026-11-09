@@ -1,3 +1,11 @@
+## Unreleased
+
+- The App application template also fetches `samples/devcontainer/heal-stale-containers.sh` and
+  makes it executable. `devcontainer.json`'s `initializeCommand` runs it on the host before
+  `docker compose up`: it removes the project's containers when the network they point at was
+  deleted, which otherwise failed every devcontainer start with `network <id> not found`
+  (ADR 0005 in thecore_devcontainer). Needs the matching `thecore` master, which carries the file.
+
 ## 3.13.0
 
 - The App application template now fetches `samples/.github/workflows/ci.yml` unconditionally,

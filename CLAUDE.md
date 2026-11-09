@@ -801,7 +801,7 @@ what tells Bundler which bundle's `rails` to resolve.
 **Devcontainer/CI/CLAUDE.md assets are fetched from `thecore`'s own `samples/`, not shipped here**
 (thecore_generators#18, extended by #25): `.devcontainer/*` (`devcontainer.json`,
 `docker-compose.yml`, `Dockerfile`, `create-db-user.sql`, `link-host-home.sh`,
-`check-plugins.sh`), **both** `.gitlab-ci.yml` and `.github/workflows/ci.yml` (ADR 0007 —
+`check-plugins.sh`, `heal-stale-containers.sh`), **both** `.gitlab-ci.yml` and `.github/workflows/ci.yml` (ADR 0007 —
 same git-hosting-agnostic reasoning ADR 0006 already established for `thecore:atom`'s own dual-CI
 generation, no hosting-profile prompt), and `CLAUDE.md` are all fetched via a
 `fetch_thecore_sample(relative_path, destination)` helper
@@ -836,7 +836,7 @@ first ran into, recurring per-asset rather than a defect in this code — `THECO
 pointed at a local `thecore` clone is the reliable way to exercise not-yet-pushed default content.
 
 Every fetch passes `force: true` — unconditional overwrite, no interactive Thor conflict prompt.
-Of the six `.devcontainer/*` files, four (`devcontainer.json`, `docker-compose.yml`, `Dockerfile`,
+Of the seven `.devcontainer/*` files, four (`devcontainer.json`, `docker-compose.yml`, `Dockerfile`,
 `create-db-user.sql`) are *expected* to already exist, written by the separate, prior "Setup
 Devcontainer" VS Code command this template runs inside the bootstrap container of (verified
 directly against that command's own source, `setupDevContainer.js`, not assumed) — replacing them
@@ -844,14 +844,17 @@ is the entire point of this ticket, not a conflict to ask about. The other two
 (`link-host-home.sh`/`check-plugins.sh`) are **not** written by that command at all — genuinely
 new files here, not overwrites — but `force: true` is harmless for a new file and keeps the whole
 block uniform; an earlier draft of this comment claimed all six pre-existed, which was wrong for
-these two (caught in review). `.gitlab-ci.yml`/`CLAUDE.md` don't exist yet in the documented flow
+these two (caught in review). The seventh, `heal-stale-containers.sh` (run by `initializeCommand`
+on the host, removes the project's containers left on a deleted network; ADR 0005 in
+`thecore_devcontainer`), is written by "Setup Devcontainer" only from the extension release after
+3.10.0, so it may be either. `.gitlab-ci.yml`/`CLAUDE.md` don't exist yet in the documented flow
 either, but stay `force: true` too so a later re-application of this same template (`bin/rails
 app:template`) is a clean overwrite rather than a prompt neither a CI pipeline nor a non-interactive
 caller could answer.
 
 `get`/`create_file` only ever write file *content* — the executable bit `link-host-home.sh`/
 `check-plugins.sh` need is lost the moment their bytes cross an HTTP fetch or a plain `File.read`,
-so the template `chmod`s both explicitly (`0o755`) right after fetching them.
+so the template `chmod`s them (and `heal-stale-containers.sh`) explicitly (`0o755`) right after fetching them.
 
 **A fetch failure aborts with a clear message, not a raw stack trace** — `fetch_thecore_sample`
 rescues `StandardError` around the `get`/`create_file` call and `abort`s naming the file, the
