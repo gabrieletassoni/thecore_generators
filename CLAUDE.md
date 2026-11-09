@@ -755,6 +755,18 @@ criterion honestly: a developer bootstrapping without network access can decline
 `bundle install && rails generate devise:install && ...` by hand once they have connectivity, and
 the Gemfile/vendor-directory content is written either way, regardless of the answer.
 
+**Test-database rule (thecore_devcontainer#8)**: after the samples fetch, the template inserts a
+block into the generated `test/test_helper.rb`, right after `ENV["RAILS_ENV"] ||= "test"`. When
+`DATABASE_URL` is set, the block replaces the database it names with `<app>_test` (`app_name` is
+interpolated at generation time), parsing the URL with `URI` so a URL naming only the server gets
+a database too. This is the pilot's rule (mytask-imas `test/test_helper.rb`), except the pilot uses
+a regex on the path, which mangles a server-only URL. The CI samples use that form so that
+`db:test:prepare` takes `database.yml`'s test name. The insert is skipped when `rails new
+--skip-test` produced no helper. The real-samples test (S1) checks the behaviour, not the text: it
+loads the generated helper with `require_relative` stubbed and reads `DATABASE_URL` at the point
+where `config/environment` would load. `require "uri"` is preloaded there, because `uri` itself
+calls `require_relative`.
+
 **Non-interactive mode (thecore_generators#23)**: `ENV["THECORE_APP_TEMPLATE_NON_INTERACTIVE"]`
 (any non-blank value — same `nil?`/`empty?` blank-safety idiom as `THECORE_SAMPLES_SOURCE` above,
 not a bare truthiness check) bypasses the `yes?` prompt entirely. When set, a second var,

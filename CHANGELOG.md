@@ -34,6 +34,14 @@
   the generated app's heal, host-home and plugin-check scripts and `initializeCommand`
   (thecore_devcontainer#6). Test-only, no change to the generated app.
 
+- The App template patches the generated `test/test_helper.rb` with the test-database rule: when
+  `DATABASE_URL` is set, the test run uses `<app>_test` on the same server, so `rails test` in the
+  devcontainer (whose `DATABASE_URL` names the development database) never touches development
+  data. Unlike the pilot's regex, it also handles a URL naming only the server, which the CI
+  samples use. The real-samples test also asserts both CI samples' test jobs: a Postgres
+  service, `RAILS_ENV=test`, a server-only `DATABASE_URL`, and `db:test:prepare` before
+  `rails test` (thecore_devcontainer#8). Needs the matching `thecore` master.
+
 ## 3.13.0
 
 - The App application template now fetches `samples/.github/workflows/ci.yml` unconditionally,

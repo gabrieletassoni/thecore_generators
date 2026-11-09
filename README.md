@@ -411,6 +411,9 @@ for the full design and why the two stay separate).
   location is one overridable point,
   `ENV["THECORE_SAMPLES_SOURCE"]`, defaulting to the raw GitHub URL for `thecore`'s `samples/`
   on `master` (`thecore`'s actual default branch).
+- **Test-database rule** — the generated `test/test_helper.rb` replaces whatever database
+  `DATABASE_URL` names with `<app>_test` before the app boots. The devcontainer's `DATABASE_URL`
+  points at development, so running tests never touches development data.
 - **No root `Dockerfile`** — the `Dockerfile` and `bin/docker-entrypoint` that `rails new` 7.2
   generates are removed, so the Thecore build script (`app-compile.sh` in `thecore_devcontainer`)
   builds the app with the Thecore Dockerfile instead of Rails' own. `.dockerignore` is kept.
