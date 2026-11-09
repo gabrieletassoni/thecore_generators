@@ -31,16 +31,16 @@ in the thecore repo for the full design. **The Collection Action generator** (`r
 thecore:collection_action`, thecore_generators#21) is also complete as of this release — see
 [ADR 0006](https://github.com/gabrieletassoni/thecore/blob/master/docs/adr/0006-atom-generator-dual-ci-manual-submodule-wiring-collection-action-reuses-existing-infra.md)
 in the thecore repo (`master`, thecore's actual default branch — unlike this gem's own
-`release/3`; the ADR 0001-0005 links above predate that distinction being double-checked; note
-that as of this gem's 3.11.0 release the ADR 0006 commit exists only in a local `thecore`
-checkout, not yet pushed to `origin/master` — same class of operational sequencing issue
-`CLAUDE.md` documents for the App template's samples fetch). **`thecore:atom`**
-(`rails generate thecore:atom NAME`, thecore_generators#20/#22) is feature-complete as of this
-release, including its `CLAUDE.md` fetch from thecore's own `samples/ATOM_CLAUDE.md` — but that
-fetch shares the exact same not-yet-pushed caveat as ADR 0006/the App template's own samples
-fetch above: it 404s against the real default GitHub URL until `thecore`'s `master` actually
-carries the commit that added `samples/ATOM_CLAUDE.md`. Phase 4's one remaining piece is
-documenting both new generators in the thecore repo's `GUIDE.md`/`WALKTHROUGH.md` (thecore#19).
+`release/3`; the ADR 0001-0005 links above predate that distinction being double-checked).
+**`thecore:atom`** (`rails generate thecore:atom NAME`, thecore_generators#20/#22) is
+feature-complete, including its `CLAUDE.md` fetch from thecore's own `samples/ATOM_CLAUDE.md`.
+Both generators are documented in the thecore repo's `docs/GUIDE.md` (§4.2.1, §4.2.2, §4.8) and
+`docs/WALKTHROUGH.md`.
+
+The App template and `thecore:atom` fetch their samples from `thecore`'s `master` on GitHub, so
+a sample this gem starts fetching must be on `master` before the release that fetches it (until
+then the fetch 404s and the generator aborts with a message naming the file). See the
+Unreleased entries in `CHANGELOG.md` for the samples the next release needs.
 
 ### What `rails generate model`/`rails generate migration` do now
 
@@ -298,10 +298,7 @@ with `--non-interactive`) for the same five fields `createATOM.js` always has, t
   the exact same `THECORE_SAMPLES_SOURCE` override mechanism the App template's own asset fetch
   already established (`ENV["THECORE_SAMPLES_SOURCE"]`, defaulting to `thecore`'s `master`
   branch; http(s) fetched over the network, anything else read as a local directory; fails fast
-  with a clear message naming the file/source/error on failure). Like the App template's own
-  `CLAUDE.md`/`.gitlab-ci.yml` fetches, this 404s against the real default URL until `thecore`'s
-  `master` actually carries the commit that added `samples/ATOM_CLAUDE.md` — see the caveat
-  above.
+  with a clear message naming the file/source/error on failure).
 
 ### `rails generate thecore:collection_action NAME`
 
