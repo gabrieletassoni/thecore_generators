@@ -1,5 +1,11 @@
 ## Unreleased
 
+- The App application template also fetches `samples/devcontainer/github-accounts.sh` and makes it
+  executable. `postCreateCommand` runs it: it makes git use the right forwarded SSH key for each
+  GitHub account's remotes, so a developer with several accounts can push to all of them. The
+  App template's real-samples test (S1) asserts it, and that `initializeCommand` creates every
+  active bind mount's host path (an existing `~/.claude.json` left untouched) before running the
+  heal script. Needs the matching `thecore` master.
 - The App application template also fetches `samples/devcontainer/heal-stale-containers.sh` and
   makes it executable. `devcontainer.json`'s `initializeCommand` runs it on the host before
   `docker compose up`: it removes the project's containers when the network they point at was
