@@ -115,7 +115,8 @@ class AppTemplateTest < Minitest::Test
       end
 
       %w[
-        .gitlab-ci.yml .github/workflows/ci.yml CLAUDE.md AGENTS.md
+        .gitlab-ci.yml .github/workflows/ci.yml .github/workflows/security.yml CLAUDE.md AGENTS.md
+        script/security_summary.rb test/script/security_summary_test.rb
         docs/agents/issue-tracker.md docs/agents/triage-labels.md docs/agents/domain.md
       ].each do |file|
         destination = File.join(app_path, file)
@@ -151,6 +152,7 @@ class AppTemplateTest < Minitest::Test
       assert_ci_test_database_practices(app_path)
       assert_agent_docs_practices(app_path)
       assert_docker_build_practices(app_path)
+      assert_security_ci_practices(app_path)
     end
   end
 
@@ -312,6 +314,110 @@ class AppTemplateTest < Minitest::Test
       "expected no root Dockerfile, so the Thecore build script uses the Thecore Dockerfile"
     refute File.exist?(File.join(app_path, "bin", "docker-entrypoint")),
       "expected no bin/docker-entrypoint (only the removed Rails Dockerfile runs it)"
+  end
+
+  GITLAB_SECURITY_TEMPLATES = %w[Jobs/SAST.gitlab-ci.yml Jobs/Secret-Detection.gitlab-ci.yml].freeze
+  # The template jobs those two includes define, and the jobs the sample adds itself.
+  GITLAB_SCANNER_JOBS = %w[semgrep-sast secret_detection].freeze
+  GITLAB_SECURITY_JOBS = %w[brakeman bundler-audit security-summary].freeze
+  GITLAB_SCHEDULE_EXCLUDED_JOBS = %w[build test lint to-dev to-prod].freeze
+  SUMMARY_COMMAND = "ruby script/security_summary.rb gl-sast-report.json gl-secret-detection-report.json"
+
+  # The pilot's security CI (mytask-imas .gitlab-ci.yml, CLAUDE.md "Security scanning"):
+  # on GitLab, SAST and Secret Detection, brakeman, bundler-audit failing only on the
+  # nightly schedule, a security-summary job turning the CE reports into an orange job,
+  # every security job starting with the pipeline, and the nightly schedule never building,
+  # testing or deploying; on GitHub, brakeman and bundler-audit (nightly too) outside the
+  # version-gated CI. The summary script and its test come with the app, and the test passes there.
+  def assert_security_ci_practices(app_path)
+    gitlab = YAML.safe_load(File.read(File.join(app_path, ".gitlab-ci.yml")), aliases: true)
+
+    includes = Array(gitlab["include"]).map { |i| i.is_a?(Hash) ? i["template"] : i }
+    GITLAB_SECURITY_TEMPLATES.each do |template|
+      assert_includes includes, template, "expected .gitlab-ci.yml to include the #{template} template"
+    end
+    schedule_rule = Array(gitlab.dig("workflow", "rules")).find { |r| r["if"].to_s.include?('"schedule"') }
+    refute_nil schedule_rule, "expected a workflow rule for scheduled pipelines"
+    %w[SAST_DISABLED SECRET_DETECTION_DISABLED].each do |var|
+      assert_equal "true", schedule_rule.dig("variables", var).to_s,
+        "expected scheduled pipelines to set #{var}, so the nightly runs bundler-audit only"
+    end
+
+    (GITLAB_SCANNER_JOBS + GITLAB_SECURITY_JOBS).each do |name|
+      job = gitlab_job(gitlab, name)
+      if name == "security-summary"
+        needed = Array(job["needs"]).map { |n| n.is_a?(Hash) ? n["job"] : n }
+        assert_equal GITLAB_SCANNER_JOBS.sort, needed.sort,
+          "expected security-summary to wait only for the two scanners"
+      else
+        assert_equal [], job["needs"], "expected #{name} to start with the pipeline (needs: [])"
+      end
+    end
+
+    brakeman = gitlab_job(gitlab, "brakeman")
+    assert brakeman["allow_failure"], "expected brakeman to report only (allow_failure)"
+    assert(Array(brakeman["script"]).any? { |c| c.match?(/\Abrakeman\b/) }, "expected the brakeman job to run brakeman")
+
+    audit = gitlab_job(gitlab, "bundler-audit")
+    assert(Array(audit["script"]).any? { |c| c.include?("bundle-audit check --update") },
+      "expected the bundler-audit job to run `bundle-audit check --update`")
+    audit_rules = Array(audit["rules"])
+    nightly = audit_rules.find { |r| r["if"].to_s.include?('"schedule"') }
+    on_push = audit_rules.find { |r| r["if"].to_s.include?('"push"') }
+    refute_nil nightly, "expected bundler-audit to run on the nightly schedule"
+    assert_equal false, nightly["allow_failure"], "expected the nightly bundler-audit to fail the pipeline"
+    refute_nil on_push, "expected bundler-audit to run on every push"
+    assert_equal true, on_push["allow_failure"], "expected bundler-audit on push to report only"
+
+    summary = gitlab_job(gitlab, "security-summary")
+    assert summary["allow_failure"], "expected security-summary to turn orange, not red"
+    assert_includes Array(summary["script"]), SUMMARY_COMMAND, "expected security-summary to run the summary script"
+
+    GITLAB_SCHEDULE_EXCLUDED_JOBS.each do |name|
+      job = gitlab.fetch(name) { flunk "expected a `#{name}` job in .gitlab-ci.yml" }
+      assert_includes Array(job.dig("except", "refs")), "schedules",
+        "expected #{name} never to run in the nightly security schedule"
+    end
+
+    github_ci = YAML.safe_load(File.read(File.join(app_path, ".github/workflows/ci.yml")), aliases: true)
+    refute github_ci.fetch(true, github_ci["on"]).to_h.key?("schedule"),
+      "expected the GitHub build/test/lint/deploy workflow never to run on a schedule"
+
+    security_path = File.join(app_path, ".github/workflows/security.yml")
+    assert File.file?(security_path), "expected a GitHub security workflow"
+    github = YAML.safe_load(File.read(security_path), aliases: true)
+    triggers = github.fetch(true, github["on"]).to_h # YAML 1.1 reads a bare `on:` key as true
+    assert triggers.key?("push"), "expected the GitHub security workflow to run on every push"
+    refute triggers["push"].to_h.key?("paths"), "expected the GitHub security workflow not to wait for a version bump"
+    assert triggers.key?("schedule"), "expected the GitHub security workflow to run nightly"
+    runs = ->(job) { Array(github.dig("jobs", job, "steps")).filter_map { |s| s["run"] }.join("\n") }
+    assert_match(/^brakeman\b/, runs.call("brakeman"), "expected a GitHub brakeman job")
+    assert_includes runs.call("bundler-audit"), "bundle-audit check --update", "expected a GitHub bundler-audit job"
+    assert_equal true, github.dig("jobs", "brakeman", "continue-on-error"), "expected GitHub brakeman to report only"
+    assert_match(/schedule/, github.dig("jobs", "bundler-audit", "continue-on-error").to_s,
+      "expected GitHub bundler-audit to fail only on the nightly schedule")
+
+    %w[script/security_summary.rb test/script/security_summary_test.rb].each do |file|
+      assert File.file?(File.join(app_path, file)), "expected #{file} in the generated app"
+    end
+    output, status = Open3.capture2e(RbConfig.ruby, "test/script/security_summary_test.rb", chdir: app_path)
+    assert status.success?, "expected the security summary's test to pass in the generated app:\n#{output}"
+    assert_match(/\b3 runs, .*\b0 failures, 0 errors\b/, output, "expected the summary test's three cases to run")
+
+    claude_md = File.read(File.join(app_path, "CLAUDE.md"))
+    scanning = markdown_section(claude_md, "## Security scanning")
+    ["brakeman", "bundler-audit", "SAST", "Secret Detection", "security-summary", "script/security_summary.rb",
+     "schedule", "allow_failure", "needs: []", ".github/workflows/security.yml"].each do |term|
+      assert_includes scanning, term, "expected \"Security scanning\" in CLAUDE.md to cover #{term}"
+    end
+  end
+
+  # A GitLab job with its `extends` (hidden jobs in the same file) merged in, as GitLab does.
+  def gitlab_job(gitlab, name)
+    job = gitlab.fetch(name) { flunk "expected a `#{name}` job in .gitlab-ci.yml" }
+    Array(job["extends"]).reverse.reduce(job.except("extends")) do |merged, parent|
+      gitlab_job(gitlab, parent).merge(merged)
+    end
   end
 
   AGENT_DOCS = %w[issue-tracker.md triage-labels.md domain.md].freeze

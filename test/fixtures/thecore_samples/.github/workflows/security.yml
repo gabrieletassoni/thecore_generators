@@ -1,0 +1,9 @@
+# Minimal fixture standing in for thecore's real samples/.github/workflows/security.yml --
+# exercises the App template's fetch offline; not a copy of the real file.
+name: Security
+on: push
+jobs:
+  brakeman:
+    runs-on: ubuntu-latest
+    steps:
+      - run: brakeman

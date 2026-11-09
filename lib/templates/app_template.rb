@@ -177,6 +177,13 @@ fetch_thecore_sample(".gitlab-ci.yml", ".gitlab-ci.yml")
 # no hosting-profile prompt, same reasoning ADR 0006 already established for thecore:atom's own
 # dual-CI generation (git hosting is a generic, per-developer choice, not something to ask about).
 fetch_thecore_sample(".github/workflows/ci.yml", ".github/workflows/ci.yml")
+# thecore_devcontainer#9: the pilot's security CI. GitHub's scans (brakeman, bundler-audit, nightly
+# too) are a workflow of their own, so the schedule never builds or deploys; the GitLab ones live in
+# .gitlab-ci.yml above. The GitLab security-summary job runs script/security_summary.rb, fetched
+# with its plain-Minitest test (run by `bin/rails test` with the rest).
+fetch_thecore_sample(".github/workflows/security.yml", ".github/workflows/security.yml")
+fetch_thecore_sample("script/security_summary.rb", "script/security_summary.rb")
+fetch_thecore_sample("test/script/security_summary_test.rb", "test/script/security_summary_test.rb")
 fetch_thecore_sample("CLAUDE.md", "CLAUDE.md")
 # thecore_devcontainer#13: the agent docs CLAUDE.md points to (issue tracker picked from the git
 # remote's host, triage labels, domain docs) and an AGENTS.md that only points to CLAUDE.md, so

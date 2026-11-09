@@ -925,7 +925,13 @@ script on `${localWorkspaceFolder}` (`devcontainer.json` is parsed as JSONC); no
 and no `bin/docker-entrypoint`; the agent docs (`assert_agent_docs_practices`: `docs/agents/` with
 the tracker picked from the git remote and the five triage labels, an `AGENTS.md` that only points
 to `CLAUDE.md`, and `CLAUDE.md`'s required sections, checked section by section with
-`markdown_section`, and no customer-specific content). The fixture run
+`markdown_section`, and no customer-specific content); the security CI
+(`assert_security_ci_practices`, thecore_devcontainer#9: the GitLab SAST/Secret Detection
+includes, `workflow: rules` disabling them on schedules, brakeman/bundler-audit/security-summary
+with `needs: []` and their `allow_failure`s, `extends` resolved by `gitlab_job`, `except:
+schedules` on build/test/lint/to-dev/to-prod, the GitHub `security.yml` on push and schedule,
+`CLAUDE.md`'s "Security scanning", and the fetched `test/script/security_summary_test.rb` run
+with plain `ruby` inside the generated app). The fixture run
 above keeps proving the fetch mechanism; this one catches drift between samples and template.
 Each area has its own `assert_*_practices(app_path)` helper called from that one method, so a
 later ticket adds a helper and a call there, and `rails new` still runs once.
