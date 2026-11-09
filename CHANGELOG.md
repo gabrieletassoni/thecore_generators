@@ -1,5 +1,12 @@
 ## Unreleased
 
+- The App application template also fetches `samples/AGENTS.md` and
+  `samples/docs/agents/{issue-tracker,triage-labels,domain}.md` (thecore_devcontainer#13): a new
+  app's agents find the tracker (GitHub Issues or GitLab Issues, picked from the git remote), the
+  five triage labels and the domain-docs layout without `/setup-matt-pocock-skills`, and agents
+  other than Claude Code are pointed to `CLAUDE.md`. The real-samples test asserts them and
+  `CLAUDE.md`'s required sections. Needs the matching `thecore` master, which carries the files.
+
 - The App application template also fetches `samples/devcontainer/heal-stale-containers.sh` and
   makes it executable. `devcontainer.json`'s `initializeCommand` runs it on the host before
   `docker compose up`: it removes the project's containers when the network they point at was

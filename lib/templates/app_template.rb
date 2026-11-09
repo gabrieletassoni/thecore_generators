@@ -163,6 +163,13 @@ fetch_thecore_sample(".gitlab-ci.yml", ".gitlab-ci.yml")
 # dual-CI generation (git hosting is a generic, per-developer choice, not something to ask about).
 fetch_thecore_sample(".github/workflows/ci.yml", ".github/workflows/ci.yml")
 fetch_thecore_sample("CLAUDE.md", "CLAUDE.md")
+# thecore_devcontainer#13: the agent docs CLAUDE.md points to (issue tracker picked from the git
+# remote's host, triage labels, domain docs) and an AGENTS.md that only points to CLAUDE.md, so
+# agents other than Claude Code read the same single source.
+fetch_thecore_sample("AGENTS.md", "AGENTS.md")
+%w[issue-tracker.md triage-labels.md domain.md].each do |doc|
+  fetch_thecore_sample("docs/agents/#{doc}", "docs/agents/#{doc}")
+end
 
 # --- Standard installer chain ------------------------------------------------
 # Needs the gems added above actually bundled and installable, i.e. real network
