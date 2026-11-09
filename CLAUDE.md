@@ -376,6 +376,22 @@ under that app's own Gemfile either way (`vendor/submodules` is a subdirectory o
 land on the same place) — but it makes gem resolution explicit rather than incidental, and it's
 what makes the generator's own test suite tractable at all (see below).
 
+**The dummy app is on PostgreSQL, and only Thecore's CI exists** (thecore_devcontainer#15) —
+`create_rails_engine` also passes `--database=postgresql` and `--skip-ci`. `--skip-ci` drops the
+`.github/workflows/ci.yml` (SQLite, `main` branch) and `.github/dependabot.yml` Rails writes by
+itself, so `gempush.yml`/`.gitlab-ci.yml` (`create_ci_files`) are the ATOM's only pipelines.
+`configure_dummy_database` replaces Rails' postgresql `database.yml` (named `dummy_*`, no host)
+with the pilot ATOM's (`mytask`) shape: server from `PG*` env vars defaulting to `db`, databases
+`<name>_<env>`. `force_atom_database_under_database_url` appends the test-database rule to the
+dummy's `config/boot.rb`: when `DATABASE_URL` is set it keeps only the server/credentials and
+forces `<name>_<RAILS_ENV>`. It's in `boot.rb`, as in the pilot, not in `test/test_helper.rb`,
+so every entry point is covered (the test helper, which sets `RAILS_ENV=test` before booting,
+`bin/rails db:*`, the `db:test:prepare` subprocess). `setup_gemfile` no longer appends `pg` when
+the Gemfile already declares it (Bundler rejects a gem declared twice). The test checks the rule
+by loading the generated `boot.rb` in a clean `ruby` process with a development `DATABASE_URL`.
+Verified by hand once: a generated ATOM's `bin/rails test` under
+`DATABASE_URL=.../hostapp_development` ran on `<name>_test`.
+
 **Gemspec rewriting reads once, applies one in-memory pass of targeted substitutions, writes
 once** — not `createATOM.js`'s own blind "rewrite every line, branch on substring" approach
 (verified directly against a real `rails plugin new --full` gemspec, Rails 7.2.3.2, rather than
@@ -459,7 +475,10 @@ repo exists yet at this point. This generator narrows that gap, per ADR 0006, wi
 closing it: a local `git init -b master` + one commit (authored as the `--author`/`--email` the
 generator just collected, via `-c user.name=.../-c user.email=...` rather than relying on
 whatever global git config happens to be present), then `say_status`-logs the exact
-`git remote add`/`git submodule add` follow-up commands — worded generically, no GitHub/GitLab
+`git remote add`/`git submodule add -b release/3` follow-up commands, then the rest of the
+pilot's "Changing an ATOM" workflow (move the host `Gemfile` from the `path:` entry to the
+published gem once it's out, `bundle update <name> --conservative`, commit `Gemfile.lock` with
+the submodule pointer; thecore_devcontainer#15) — worded generically, no GitHub/GitLab
 assumption — rather than creating a remote repository or running `git submodule add` itself
 (deliberately out of scope, ADR 0006: an irreversible, credential-dependent, cross-boundary
 action a human should confirm, matching how `AssociationWiring`'s own cross-boundary dependency
@@ -719,6 +738,16 @@ own mechanism for exactly this ordering problem: `run_after_bundle_callbacks` (a
 `public_task`, after `run_bundle`) invokes every registered block only once bundling has actually
 happened.
 
+**No root `Dockerfile` (thecore_devcontainer#7)**: `rails new` 7.2 writes a Kamal-style root
+`Dockerfile` and the `bin/docker-entrypoint` it runs. The Thecore build script
+(`scripts/app-compile.sh` in `thecore_devcontainer`) builds with a root `Dockerfile` whenever one
+exists, and only falls back to the Thecore one (`/etc/thecore/docker/Dockerfile`) otherwise — so
+the template `remove_file`s both, and the app is built like the pilot (mytask-imas), which has no
+root `Dockerfile`. Done here rather than in the extension, so "Create an App" (which delegates to
+this template) and a bare `rails new -m` behave the same. `.dockerignore` is kept: the Thecore
+Dockerfile's `ADD .` honours it (the extension's "Create an App" still deletes it on its own).
+The real-samples test (S1, below) asserts both files are gone (`assert_docker_build_practices`).
+
 **The installer chain is genuinely optional, not a test-only escape hatch** — gated behind a real
 interactive `yes?` prompt ("Run `bundle install` and the standard installer generators ... now?"),
 matching this ticket's "uses Thor's `ask`/`yes?` DSL for any genuine choice point" acceptance
@@ -879,7 +908,8 @@ responsibility, and it has no test suite by design — see its own CLAUDE.md).
 this time from a local checkout of `thecore`'s **real** `samples/`, and asserts on that app the
 practices a developer gets from the pilot (mytask-imas): today the heal, host-home and
 plugin-check scripts in `.devcontainer/`, executable, and `initializeCommand` running the heal
-script on `${localWorkspaceFolder}` (`devcontainer.json` is parsed as JSONC). The fixture run
+script on `${localWorkspaceFolder}` (`devcontainer.json` is parsed as JSONC); no root `Dockerfile`
+and no `bin/docker-entrypoint`. The fixture run
 above keeps proving the fetch mechanism; this one catches drift between samples and template.
 Each area has its own `assert_*_practices(app_path)` helper called from that one method, so a
 later ticket adds a helper and a call there, and `rails new` still runs once.

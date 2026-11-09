@@ -79,6 +79,18 @@ create_file "vendor/external/.keep", <<~TEXT
   anything automatically.
 TEXT
 
+# --- No root Dockerfile ------------------------------------------------------
+# `rails new` (7.2) writes a Kamal-style root `Dockerfile` plus the
+# `bin/docker-entrypoint` it runs. The Thecore build script (`app-compile.sh` in
+# thecore_devcontainer) prefers a root `Dockerfile` whenever one exists, so keeping
+# Rails' one would make CI build the app with it instead of the Thecore Dockerfile
+# (`/etc/thecore/docker/Dockerfile`), which is what the pilot (mytask-imas) uses.
+# Removed here, not in the extension, so both "Create an App" and a bare
+# `rails new -m` get it. `.dockerignore` is left alone: the Thecore Dockerfile's
+# `ADD .` honours it.
+remove_file "Dockerfile"
+remove_file "bin/docker-entrypoint"
+
 # --- Devcontainer / CI / CLAUDE.md assets, from thecore's own samples -------
 # Single source of truth (ADR 0005) — not duplicated inside this gem. The base
 # location is resolved fresh inside `fetch_thecore_sample` on every call, through
