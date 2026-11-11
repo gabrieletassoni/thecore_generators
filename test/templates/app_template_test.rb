@@ -174,7 +174,7 @@ class AppTemplateTest < Minitest::Test
   # path performs a real `bundle install` plus several `rails generate`/`rails_command`
   # network-touching steps, the same "known non-blocking limitation" already documented
   # for the interactive "yes" path when thecore_generators#17 shipped (see this file's
-  # own git history / CLAUDE.md) -- kept as a manual-verification-only path for the same
+  # own git history / docs/agents/app-template.md) -- kept as a manual-verification-only path for the same
   # reason, not an oversight.
   def test_non_interactive_mode_skips_installer_chain_when_run_installers_is_false
     Dir.mktmpdir do |dir|

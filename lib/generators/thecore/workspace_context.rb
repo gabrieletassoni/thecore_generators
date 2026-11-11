@@ -147,7 +147,7 @@ module Thecore
         # submodule of a host app and running its own generator tests with
         # a tmp destination_root), walking up from cwd would otherwise find
         # that enclosing <x> and redirect every file *out of* app_root into
-        # it. See thecore_generators' CLAUDE.md, WorkspaceContext.
+        # it. See docs/agents/model-and-migration-generators.md, WorkspaceContext.
         def resolve_cwd_atom(cwd, app_root)
           candidate = atom_root_of(cwd)
           return nil unless candidate

@@ -349,7 +349,7 @@ module Thecore
       # happens to sit inside a `vendor/submodules/<atom>/` tree at the
       # moment `--fix` runs (e.g. invoked via an explicit `bin/rails` path
       # rather than the `rails` executable's own directory walk-up - see
-      # WorkspaceContext's `Dir.pwd`-reset gotcha in this gem's CLAUDE.md),
+      # WorkspaceContext's `Dir.pwd`-reset gotcha in docs/agents/model-and-migration-generators.md),
       # `AtomAware#initialize` would silently redirect the freshly-built
       # generator's `destination_root` into that unrelated ATOM instead of
       # `@app_root`, even though this violation was found in host-app

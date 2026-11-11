@@ -140,7 +140,7 @@ class Thecore::CheckPracticesActionsTest < ActiveSupport::TestCase
 
   test "lib/collection_actions is scanned with the same rules, and --fix regenerates missing companions via CollectionActionGenerator (thecore_generators#21)" do
     # Collection's companion templates are deliberately byte-identical to Root's (see
-    # CollectionActionGenerator's own CLAUDE.md section) - generated *content* can't prove which
+    # CollectionActionGenerator's section in docs/agents/action-generators.md) - generated *content* can't prove which
     # generator rendered them, so the dispatch itself is asserted directly instead.
     assert_equal Thecore::Generators::CollectionActionGenerator,
       Thecore::CheckPractices::Runner::ACTION_GENERATOR_CLASSES["collection_action"]
@@ -201,7 +201,7 @@ class Thecore::CheckPracticesActionsTest < ActiveSupport::TestCase
   # forcing host-app placement. If the check_practices process's own
   # `Dir.pwd` happened to sit inside a `vendor/submodules/<atom>/` tree at
   # fix time (e.g. invoked via an explicit `bin/rails` path from inside an
-  # ATOM - see this gem's CLAUDE.md, WorkspaceContext's `Dir.pwd`-reset
+  # ATOM - see docs/agents/model-and-migration-generators.md, WorkspaceContext's `Dir.pwd`-reset
   # gotcha), the fix for a *host-app* violation would silently land inside
   # that unrelated ATOM instead.
   test "a host-app fix lands in the host app even when the process's own Dir.pwd sits inside an unrelated ATOM" do

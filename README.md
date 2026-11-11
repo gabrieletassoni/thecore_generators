@@ -495,8 +495,8 @@ The host backend app's own `Gemfile` (`:development` group) and the
 `addModel`/`addMigration` commands both depend on this gem being present to get Thecore-aware
 `rails generate` behavior — the extension actually checks for it and offers to add it
 automatically if it's missing, since without it `rails generate model`/`migration` still "work"
-but silently skip every convention described above. See `CLAUDE.md`'s "Who consumes this gem"
-section for detail.
+but silently skip every convention described above. See `docs/agents/consumers.md`
+for detail.
 
 ## Releasing
 
