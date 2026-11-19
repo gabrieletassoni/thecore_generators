@@ -58,7 +58,7 @@ Every change gets tests; keep `CLAUDE.md` or the `docs/agents/` file it points t
 
 ## Releasing
 
-Version lives in `lib/thecore_generators/version.rb` (currently `3.11.0`). Pushing a commit that
+Version lives in `lib/thecore_generators/version.rb` (currently `3.14.0`). Pushing a commit that
 bumps it triggers `.github/workflows/gempush.yml`, which tags the commit with that version and
 publishes to RubyGems (skipped if the tag already exists) — same pattern as the other gems in
 this ecosystem.

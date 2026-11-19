@@ -1,4 +1,4 @@
-## Unreleased
+## 3.14.0
 
 - The App template also fetches `.devcontainer/docker-socket-gid.sh` (made executable) and
   `.devcontainer/.gitignore` from `thecore`'s samples. The script, run last by `initializeCommand`
