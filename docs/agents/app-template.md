@@ -165,7 +165,9 @@ what tells Bundler which bundle's `rails` to resolve.
 **Devcontainer/CI/CLAUDE.md assets are fetched from `thecore`'s own `samples/`, not shipped here**
 (thecore_generators#18, extended by #25): `.devcontainer/*` (`devcontainer.json`,
 `docker-compose.yml`, `Dockerfile`, `create-db-user.sql`, `link-host-home.sh`,
-`check-plugins.sh`, `heal-stale-containers.sh`), **both** `.gitlab-ci.yml` and `.github/workflows/ci.yml` (ADR 0007 —
+`check-plugins.sh`, `heal-stale-containers.sh`, `github-accounts.sh`, `docker-socket-gid.sh` and
+`.gitignore` — the last two give `vscode` the host's `docker.sock` group via compose's `group_add`
+and keep the per-host `.devcontainer/.env` out of git, ADR 0006 in `thecore_devcontainer`), **both** `.gitlab-ci.yml` and `.github/workflows/ci.yml` (ADR 0007 —
 same git-hosting-agnostic reasoning ADR 0006 already established for `thecore:atom`'s own dual-CI
 generation, no hosting-profile prompt), `CLAUDE.md`, `AGENTS.md` and `docs/agents/`
 (`issue-tracker.md`, `triage-labels.md`, `domain.md`; thecore_devcontainer#13) are all fetched via a
@@ -197,7 +199,7 @@ samples change is pushed before the template change that fetches it (spec thecor
 
 Every fetch passes `force: true` — unconditional overwrite, no interactive Thor conflict prompt.
 In the documented flow the separate, prior "Setup Devcontainer" VS Code command
-(`setupDevContainer.js`) has already written all eight `.devcontainer/*` files (the extension's
+(`setupDevContainer.js`) has already written all eight `.devcontainer/*` files (ten from the release after 3.11.0; the extension's
 templates carry the same content as the samples, thecore_devcontainer#11) — replacing them is the
 point, not a conflict to ask about. With a bare `rails new -m`, or an older extension release, some
 or all of them are new files instead, and `force: true` is harmless there. `.gitlab-ci.yml`,
@@ -207,7 +209,8 @@ pipeline nor a non-interactive caller could answer.
 
 `get`/`create_file` only ever write file *content* — the executable bit `link-host-home.sh`/
 `check-plugins.sh` need is lost the moment their bytes cross an HTTP fetch or a plain `File.read`,
-so the template `chmod`s them (and `heal-stale-containers.sh`) explicitly (`0o755`) right after fetching them.
+so the template `chmod`s them (and `heal-stale-containers.sh`, `github-accounts.sh`,
+`docker-socket-gid.sh`) explicitly (`0o755`) right after fetching them.
 
 **A fetch failure aborts with a clear message, not a raw stack trace** — `fetch_thecore_sample`
 rescues `StandardError` around the `get`/`create_file` call and `abort`s naming the file, the

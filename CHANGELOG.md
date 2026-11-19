@@ -1,5 +1,13 @@
 ## Unreleased
 
+- The App template also fetches `.devcontainer/docker-socket-gid.sh` (made executable) and
+  `.devcontainer/.gitignore` from `thecore`'s samples. The script, run last by `initializeCommand`
+  on the host, writes the host's `docker.sock` group id to `.devcontainer/.env`, and the samples'
+  `docker-compose.yml` adds it with `group_add`, so `docker` works as `vscode` without `sudo`; the
+  `.gitignore` keeps that per-host `.env` out of git (ADR 0006 in `thecore_devcontainer`). The
+  real-samples test (S1) now expects `initializeCommand` to end with the heal call followed by
+  the gid call.
+
 - `thecore:atom` with `--gem-host` other than RubyGems: the generated `gempush.yml` now pushes to
   that host (`gem push --host https://HOST *.gem`, key from the `GEMS_REPO_CREDENTIALS` repository
   secret) instead of RubyGems, which refused the gem since `allowed_push_host` names the other

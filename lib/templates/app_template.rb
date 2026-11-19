@@ -146,7 +146,8 @@ remove_file "bin/docker-entrypoint"
 # Every write below is unconditional (`force: true`, no interactive prompt).
 # Inside the documented flow, the separate, prior "Setup Devcontainer" step
 # (`thecore_code_extension/commands/setupDevContainer.js`) has already written the
-# eight `.devcontainer/*` files; replacing them with the samples is the point, not a
+# eight `.devcontainer/*` files (ten from the extension release after 3.11.0);
+# replacing them with the samples is the point, not a
 # conflict to ask about. With a bare `rails new -m` (or an older extension release)
 # some or all of them are new files instead, and `force: true` is harmless there.
 # `.gitlab-ci.yml`/`CLAUDE.md` and the agent docs stay unconditional too, so
@@ -173,18 +174,23 @@ rescue StandardError => e
     "-- aborting the app template. Set THECORE_SAMPLES_SOURCE to override the source.")
 end
 
+# `docker-socket-gid.sh` (initializeCommand, on the host) writes the host's
+# docker.sock gid to `.devcontainer/.env` for docker-compose.yml's `group_add`;
+# `.gitignore` keeps that per-host `.env` out of git, since Rails' own
+# `.gitignore` only covers `/.env*` at the root (ADR 0006 in thecore_devcontainer).
 %w[devcontainer.json docker-compose.yml Dockerfile create-db-user.sql link-host-home.sh check-plugins.sh
-   heal-stale-containers.sh github-accounts.sh].each do |file|
+   heal-stale-containers.sh github-accounts.sh docker-socket-gid.sh .gitignore].each do |file|
   fetch_thecore_sample("devcontainer/#{file}", ".devcontainer/#{file}")
 end
 # `get`/`create_file` only write content, never permissions — the executable bit
-# has to be restored explicitly for the four scripts (`thecore/samples/devcontainer/`
+# has to be restored explicitly for the five scripts (`thecore/samples/devcontainer/`
 # stores them executable, but that's lost the moment their bytes cross an HTTP
 # fetch or a plain `File.read`).
 chmod ".devcontainer/link-host-home.sh", 0o755
 chmod ".devcontainer/check-plugins.sh", 0o755
 chmod ".devcontainer/heal-stale-containers.sh", 0o755
 chmod ".devcontainer/github-accounts.sh", 0o755
+chmod ".devcontainer/docker-socket-gid.sh", 0o755
 
 fetch_thecore_sample(".gitlab-ci.yml", ".gitlab-ci.yml")
 # thecore_generators#25 (ADR 0007): fetched unconditionally, alongside .gitlab-ci.yml above --

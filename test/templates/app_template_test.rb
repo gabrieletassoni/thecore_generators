@@ -98,13 +98,15 @@ class AppTemplateTest < Minitest::Test
       %w[
         devcontainer.json docker-compose.yml Dockerfile create-db-user.sql
         link-host-home.sh check-plugins.sh heal-stale-containers.sh github-accounts.sh
+        docker-socket-gid.sh .gitignore
       ].each do |file|
         destination = File.join(app_path, ".devcontainer", file)
         assert File.file?(destination), "expected .devcontainer/#{file} to be fetched from thecore's samples"
         assert_equal File.read(File.join(SAMPLES_FIXTURE_DIR, "devcontainer", file)), File.read(destination),
           "expected the fetched .devcontainer/#{file} to match the fixture byte-for-byte"
       end
-      %w[link-host-home.sh check-plugins.sh heal-stale-containers.sh github-accounts.sh].each do |script|
+      %w[link-host-home.sh check-plugins.sh heal-stale-containers.sh github-accounts.sh
+         docker-socket-gid.sh].each do |script|
         mode = File.stat(File.join(app_path, ".devcontainer", script)).mode
         assert (mode & 0o111).positive?, "expected .devcontainer/#{script} to be executable"
       end
@@ -251,11 +253,12 @@ class AppTemplateTest < Minitest::Test
   end
 
   # The pilot's devcontainer practices: stale containers healed on the host before
-  # compose starts, the host home aliased for Claude Code's plugin paths, one SSH key
-  # per GitHub account, and the plugin check -- each a script the container can run,
-  # wired where the pilot wires it.
+  # compose starts, the host's docker.sock group handed to the app container, the host
+  # home aliased for Claude Code's plugin paths, one SSH key per GitHub account, and the
+  # plugin check -- each a script the container can run, wired where the pilot wires it.
   def assert_devcontainer_practices(app_path)
-    %w[heal-stale-containers.sh link-host-home.sh github-accounts.sh check-plugins.sh].each do |script|
+    %w[heal-stale-containers.sh docker-socket-gid.sh link-host-home.sh github-accounts.sh
+       check-plugins.sh].each do |script|
       path = File.join(app_path, ".devcontainer", script)
       assert File.file?(path), "expected .devcontainer/#{script} in the generated app"
       assert File.executable?(path), "expected .devcontainer/#{script} to be executable"
@@ -273,6 +276,13 @@ class AppTemplateTest < Minitest::Test
     app_service = compose.dig("services", devcontainer["service"])
     refute_nil app_service, "expected docker-compose.yml to define the #{devcontainer["service"]} service"
     assert_equal "vscode", app_service["user"], "expected the app service to run as user vscode"
+
+    # docker.sock keeps the host's gid: docker-socket-gid.sh writes it to .devcontainer/.env,
+    # the app service adds it, and that per-host .env never reaches git.
+    assert_equal ["${DOCKER_SOCKET_GID:-996}"], app_service["group_add"],
+      "expected the app service to group_add the host's docker.sock gid"
+    gitignore = File.read(File.join(app_path, ".devcontainer", ".gitignore")).lines.map(&:strip)
+    assert_includes gitignore, "/.env", "expected .devcontainer/.gitignore to keep the per-host .env out of git"
   end
 
   # Top-level keys GitHub Actions accepts in a workflow file; any other key (such as a
@@ -291,18 +301,21 @@ class AppTemplateTest < Minitest::Test
   end
 
   HEAL_CALL = "bash .devcontainer/heal-stale-containers.sh '${localWorkspaceFolder}'"
+  SOCKET_GID_CALL = "bash .devcontainer/docker-socket-gid.sh"
 
   # Every active bind mount must have its host path created by initializeCommand (on the
   # host, before `docker compose up`), or a fresh machine can't start the container: a
   # missing directory fails the mount, a missing file becomes a directory. The heal call
-  # comes last. Checked by running the part before the heal call against an empty HOME
+  # follows, then the docker.sock gid call last. Checked by running the part before the heal call against an empty HOME
   # (the ~/.claude.json mount is a file, the others directories), then against a HOME
   # whose ~/.claude.json already has content, which must survive.
   def assert_host_paths_created_before_heal(devcontainer)
     command = devcontainer["initializeCommand"].to_s
-    assert command.end_with?(HEAL_CALL),
-      "expected initializeCommand to end by running the heal script on the workspace folder, got: #{command}"
-    setup = command.delete_suffix(HEAL_CALL).strip.delete_suffix("&&").strip
+    assert command.end_with?("#{HEAL_CALL} && #{SOCKET_GID_CALL}"),
+      "expected initializeCommand to end by running the heal script on the workspace folder, " \
+      "then the docker.sock gid script, got: #{command}"
+    setup = command.delete_suffix(SOCKET_GID_CALL).strip.delete_suffix("&&").strip
+      .delete_suffix(HEAL_CALL).strip.delete_suffix("&&").strip
 
     sources = Array(devcontainer["mounts"]).filter_map do |mount|
       mount[/(?:\A|,)source=([^,]+)/, 1] if mount.include?("type=bind")
