@@ -215,7 +215,8 @@ class AppTemplateTest < Minitest::Test
         "THECORE_APP_TEMPLATE_NON_INTERACTIVE" => "1",
         "THECORE_APP_TEMPLATE_RUN_INSTALLERS" => "true",
         "DATABASE_URL" => nil,
-        "RAILS_ENV" => nil
+        "RAILS_ENV" => nil,
+        "JUNIT_REPORT_DIR" => nil # this suite's own CI report, never the generated app's
       }
       run = lambda do |*command, chdir:, extra: {}|
         out, status = Bundler.with_unbundled_env { Open3.capture2e(env.merge(extra), *command, chdir: chdir) }

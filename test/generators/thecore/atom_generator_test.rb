@@ -415,7 +415,9 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
   # run); the test-database rule keeps it on tcp_debugger_test either way.
   def assert_generated_atom_tests_pass(atom)
     atom_path = File.join(destination_root, atom)
-    env = { "BUNDLE_GEMFILE" => File.join(atom_path, "Gemfile"), "RAILS_ENV" => "test" }
+    # JUNIT_REPORT_DIR removed: this suite's own CI sets it, and inherited by the ATOM it would
+    # switch the ATOM's output to the JUnit reporter and empty this gem's own report directory.
+    env = { "BUNDLE_GEMFILE" => File.join(atom_path, "Gemfile"), "RAILS_ENV" => "test", "JUNIT_REPORT_DIR" => nil }
     output = ["bundle install --quiet", "bin/rails db:create", "bin/rails test"].map do |command|
       output, status = Bundler.with_unbundled_env do
         Open3.capture2e(env, command, chdir: atom_path)
