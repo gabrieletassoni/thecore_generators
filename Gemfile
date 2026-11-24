@@ -44,3 +44,6 @@ gem "minitest", "~> 5.25"
 # unconditionally regardless of `Rails.env`, same as every other gem below.
 gem "model_driven_api", "~> 3.9"
 gem "thecore_ui_rails_admin", "~> 3.8"
+
+# JUnit XML report in CI (test/support/junit_report.rb, only when JUNIT_REPORT_DIR is set).
+gem "minitest-reporters", "~> 1.8"
