@@ -75,7 +75,9 @@ Gemfile (Rails 7.2's runner breaks on Minitest 6). The ATOM has no lockfile, so 
 `spec.add_dependency "rails", "~> 7.2"` (`RAILS_VERSION`, the Rails of Thecore 3 hosts), and the
 `--skip-api-admin-deps` test checks that the ATOM's `Gemfile.lock` resolves Rails 7.2.
 
-**It publishes like the real ATOMs** (thecore_devcontainer#14). The repository starts on
+**It publishes like the real ATOMs** (thecore_devcontainer#14), except for the test gate: the
+real ATOMs now publish only after a green test job (this repo's own `gempush.yml`), while the
+generated `gempush.yml` and `.gitlab-ci.yml` still have none (#26). The repository starts on
 `release/3` (`git init -b release/3`, and the next steps push to it), the only branch that
 publishes. `gempush.yml` (GitHub, RubyGems) runs only on pushes to `release/3`, as in
 `model_driven_api`. `.gitlab-ci.yml` (`create_ci_files`, built by the private `gitlab_ci`) follows

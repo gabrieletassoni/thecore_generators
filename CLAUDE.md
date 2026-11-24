@@ -60,7 +60,7 @@ Every change gets tests; keep `CLAUDE.md` or the `docs/agents/` file it points t
 ## Releasing
 
 Version lives in `lib/thecore_generators/version.rb` (currently `3.14.0`). Pushing a commit that
-bumps it publishes it: `.github/workflows/gempush.yml` runs the test suite (PostgreSQL 15, Ruby 3.3, JUnit report kept as the `junit` artifact) on every push and pull request on `release/3`; on a push its `publish` job runs only when the tests are green, and only for a version in `lib/*/version.rb` with no tag yet: it tags it, creates the GitHub release with the JUnit report attached, and pushes the gem to RubyGems. A red test never publishes (the former separate `ci.yml` is merged into it). Same pattern as the other gems in
+bumps it publishes it: `.github/workflows/gempush.yml` runs the test suite (PostgreSQL 15, Ruby 3.3, JUnit report kept as the `junit` artifact) on every push and pull request on `release/3`; on a push its `publish` job runs only when the tests are green, and only for a version in `lib/*/version.rb` with no tag yet: it pushes the gem to RubyGems, then tags it and creates the GitHub release with the JUnit report attached. A red test never publishes (the former separate `ci.yml` is merged into it). Same pattern as the other gems in
 this ecosystem.
 
 Secret scanning with push protection is the only check that blocks a push: if it fires on a real secret, remove it from the commit and rotate the secret; never bypass it (`docs/agents/security-scanning.md`).
