@@ -164,6 +164,41 @@ create_file "app/models/ability.rb", <<~RUBY, skip: true
   end
 RUBY
 
+# --- The Thecore 3 runtime, not Rails 8's defaults (#27, stage 1) -------------
+# release/3 apps run like the pilot (mytask-imas): jobs on Sidekiq (thecore_backend_commons
+# sets the production adapter), Action Cable on Redis, one production database (a Thecore
+# deploy has one), built with the Thecore Dockerfile. Rails 8's Solid Queue/Cache/Cable, Kamal
+# and Thruster come with release/4 (ADR 0035 in mytask-imas). The result is what `rails new
+# --skip-solid --skip-kamal --skip-thruster` writes, except SSL: `--skip-kamal` would also turn
+# on `force_ssl`/`assume_ssl`, while a Thecore installation terminates SSL at its proxy, so they
+# stay commented out. Done here, not left to the caller, so "Create App" and a bare
+# `rails new -m` give the same app; Rails 7.2's `rails new` writes none of it.
+#
+# The skeleton is already written when the template runs, but Rails' own `run_kamal` (`kamal
+# init`, config/deploy.yml, .kamal/) and `run_solid` (the solid_*:install commands, which write
+# config/{queue,cache,recurring}.yml, db/*_schema.rb, bin/jobs, the Solid lines of
+# production.rb and cable.yml) run after it: the same switches skip them, as Rails' own
+# implied options do.
+self.options = options.merge(skip_solid: true, skip_kamal: true, skip_thruster: true).freeze
+gsub_file "Gemfile", /^# Use the database-backed adapters for Rails\.cache.*\n/, ""
+gsub_file "Gemfile", /^# Deploy this application anywhere as a Docker container.*\n/, ""
+gsub_file "Gemfile", /^# Add HTTP asset caching\/compression and X-Sendfile.*\n/, ""
+gsub_file "Gemfile", /^gem ["'](solid_cache|solid_queue|solid_cable|kamal|thruster)["'].*\n\n?/, ""
+if File.exist?(File.join(destination_root, "config/database.yml"))
+  # Rails 8's production section (primary + cache/queue/cable databases, with a comment on
+  # their *_DATABASE_URL variables) becomes the single database `--skip-solid` writes.
+  gsub_file "config/database.yml",
+    /^# Connection URLs for non-primary databases.*?_DATABASE_URL=.*?\n#\n/m, ""
+  gsub_file "config/database.yml",
+    /^production:\n  primary: &primary_production\n(?:    .*\n)+(?:  (?:cache|queue|cable):\n(?:    .*\n)+)+/ do |section|
+    primary = section[/  primary: &primary_production\n((?:    .*\n)+)/, 1]
+    "production:\n" + primary.gsub(/^    /, "  ")
+  end
+end
+gsub_file "config/puma.rb", /^# Run the Solid Queue supervisor inside of Puma.*\nplugin :solid_queue.*\n\n?/, "" if File.exist?(File.join(destination_root, "config/puma.rb"))
+gsub_file ".dockerignore", /^# Ignore Kamal files\.\n(?:\/.*\n)+\n?/, "" if File.exist?(File.join(destination_root, ".dockerignore"))
+remove_file "bin/thrust"
+
 # --- Action Cable base classes ----------------------------------------------
 # Rails 8 no longer generates app/channels/application_cable (7.2 did), but
 # thecore_backend_commons includes its JWT cable authentication into

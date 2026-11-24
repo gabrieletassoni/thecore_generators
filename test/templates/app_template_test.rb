@@ -88,6 +88,9 @@ class AppTemplateTest < Minitest::Test
       assert_match(/stylesheet_link_tag "application"/, layout)
       refute_match(/stylesheet_link_tag :app\b/, layout)
 
+      assert_thecore3_runtime_practices(app_path)
+      assert_same_as_rails_skip_switches(app_path)
+
       # Rails 8 no longer generates them, and thecore_backend_commons extends both at boot.
       assert_match(/class Connection < ActionCable::Connection::Base/,
         File.read(File.join(app_path, "app/channels/application_cable/connection.rb")))
@@ -195,6 +198,7 @@ class AppTemplateTest < Minitest::Test
       assert_security_ci_practices(app_path)
       assert_gem_floor_practices(app_path)
       assert_github_workflow_practices(app_path)
+      assert_thecore3_runtime_practices(app_path)
     end
   end
 
@@ -237,6 +241,31 @@ class AppTemplateTest < Minitest::Test
         # The fixture samples bring no tests of their own: what matters is a green, booting suite.
         assert_match(/\d+ runs, \d+ assertions, 0 failures, 0 errors/, output)
         run.call("bin/rails", "runner", "Rails.application.eager_load!", chdir: app_path, extra: test_env)
+        # The Thecore 3 runtime after a real bundle and every installer: none of Rails 8's
+        # Solid/Kamal/Thruster pieces is in the lock, on disk or referenced anywhere.
+        assert_thecore3_runtime_practices(app_path)
+        locked = Bundler::LockfileParser.new(File.read(File.join(app_path, "Gemfile.lock"))).specs.map(&:name)
+        assert_empty locked & RAILS8_RUNTIME_GEMS, "expected none of #{RAILS8_RUNTIME_GEMS} in the lock"
+        leftovers = Dir.glob("**/*", File::FNM_DOTMATCH, base: app_path).reject do |f|
+          f.start_with?("log/", "tmp/", "storage/", ".git/") || f == "Gemfile.lock" ||
+            File.directory?(File.join(app_path, f))
+        end.select { |f| File.read(File.join(app_path, f)).scrub.match?(/solid_(queue|cache|cable)|kamal|thrust/i) }
+        assert_empty leftovers, "expected no file to reference Solid Queue/Cache/Cable, Kamal or Thruster"
+        # Production boots on the pilot's runtime: Sidekiq (set by thecore_backend_commons),
+        # Action Cable on Redis, one database. The Thecore engines read their settings at boot,
+        # so it connects to this test's own throwaway test database, never another one.
+        s3_database_url = URI::Generic.build(
+          scheme: "postgres", host: ENV.fetch("PGHOST", "db"), port: ENV.fetch("PGPORT", 5432).to_i,
+          userinfo: "#{ENV.fetch("PGUSER", "postgres")}:#{ENV.fetch("PGPASSWORD", "postgres")}",
+          path: "/#{File.basename(app_path)}_test"
+        ).to_s
+        prod = run.call("bin/rails", "runner",
+          'print [ActiveJob::Base.queue_adapter_name, ActionCable.server.config.cable["adapter"], ' \
+          'ActiveRecord::Base.configurations.configs_for(env_name: "production").map(&:name)].inspect',
+          chdir: app_path, extra: { "RAILS_ENV" => "production", "SECRET_KEY_BASE_DUMMY" => "1",
+                                    "REDIS_URL" => "redis://localhost:6379/1", "DATABASE_URL" => s3_database_url })
+        assert_includes prod, '["sidekiq", "redis", ["primary"]]'
+
         # A page with the app's own layout renders (its stylesheet resolves in Sprockets).
         rendered = run.call("bin/rails", "runner",
           'print ApplicationController.render(inline: "s3-ok", layout: "application")',
@@ -245,6 +274,78 @@ class AppTemplateTest < Minitest::Test
       ensure
         Bundler.with_unbundled_env { Open3.capture2e(env.merge(test_env), "bin/rails", "db:drop", chdir: app_path) }
       end
+    end
+  end
+
+  # Rails 8's runtime defaults the Thecore 3 stack replaces (thecore_generators#27, stage 1).
+  RAILS8_RUNTIME_GEMS = %w[solid_cache solid_queue solid_cable kamal thruster].freeze
+  RAILS8_RUNTIME_FILES = %w[
+    config/deploy.yml .kamal bin/kamal bin/thrust bin/jobs config/queue.yml config/cache.yml
+    config/recurring.yml db/cache_schema.rb db/queue_schema.rb db/cable_schema.rb
+  ].freeze
+
+  # A new app runs on the pilot's (mytask-imas) Thecore 3 runtime, not on Rails 8's defaults:
+  # Sidekiq (thecore_backend_commons sets the production adapter), Action Cable on Redis, one
+  # production database (a Thecore deploy has one), the Thecore Dockerfile instead of Kamal and
+  # Thruster. Solid Queue/Cable/Cache arrive with release/4 (ADR 0035 in mytask-imas, #27).
+  def assert_thecore3_runtime_practices(app_path)
+    gemfile = File.read(File.join(app_path, "Gemfile"))
+    RAILS8_RUNTIME_GEMS.each do |name|
+      refute_match(/^\s*gem ["']#{name}["']/, gemfile, "expected no `#{name}` in the Gemfile")
+    end
+    refute_match(/Use the database-backed adapters|kamal-deploy|basecamp\/thruster/, gemfile,
+      "expected the removed gems' comments gone too")
+    RAILS8_RUNTIME_FILES.each do |file|
+      refute File.exist?(File.join(app_path, file)), "expected no #{file}"
+    end
+
+    production = File.read(File.join(app_path, "config/environments/production.rb"))
+    refute_match(/solid_cache_store|solid_queue/, production)
+    assert_match(/^\s*# config\.cache_store = :mem_cache_store$/, production)
+    if Rails::VERSION::MAJOR >= 8
+      # Rails 8's skeleton leaves them off; `--skip-kamal` would turn them on. The installation's
+      # proxy terminates SSL. (Rails 7.2's own skeleton turns force_ssl on.)
+      assert_match(/^\s*# config\.force_ssl = true$/, production)
+      assert_match(/^\s*# config\.assume_ssl = true$/, production)
+    end
+    refute_match(/plugin :solid_queue/, File.read(File.join(app_path, "config/puma.rb")))
+
+    database = YAML.safe_load(ERB.new(File.read(File.join(app_path, "config/database.yml"))).result, aliases: true)
+    assert_equal "#{File.basename(app_path)}_production", database.dig("production", "database"),
+      "expected a single production database, not primary/cache/queue/cable"
+    refute database["production"].key?("primary"), "expected no multi-database production config"
+
+    cable = YAML.safe_load(ERB.new(File.read(File.join(app_path, "config/cable.yml"))).result, aliases: true)
+    assert_equal "redis", cable.dig("production", "adapter")
+    assert_equal "#{File.basename(app_path)}_production", cable.dig("production", "channel_prefix")
+    assert_match(/ENV\.fetch\("REDIS_URL"\)/, File.read(File.join(app_path, "config/cable.yml")))
+  end
+
+  # The runtime files are exactly what `rails new --skip-solid --skip-kamal --skip-thruster`
+  # writes for an app of the same name, except the two SSL lines `--skip-kamal` turns on (a
+  # Thecore installation terminates SSL at its proxy). Rails 7.2 has no such switches.
+  def assert_same_as_rails_skip_switches(app_path)
+    skip "Rails #{Rails.version} has no --skip-solid/--skip-kamal" if Rails::VERSION::MAJOR < 8
+
+    Dir.mktmpdir do |dir|
+      reference = File.join(dir, File.basename(app_path))
+      stdout, stderr, status = Open3.capture3(
+        { "BUNDLE_GEMFILE" => File.join(GEM_ROOT, "Gemfile") },
+        "bundle", "exec", "rails", "new", reference, "--database=postgresql", "--skip-bundle", "--skip-git",
+        "--quiet", "--skip-solid", "--skip-kamal", "--skip-thruster", chdir: dir
+      )
+      assert status.success?, "reference `rails new` failed:\n#{stdout}\n#{stderr}"
+
+      %w[config/database.yml config/puma.rb config/cable.yml .dockerignore].each do |file|
+        assert_equal File.read(File.join(reference, file)), File.read(File.join(app_path, file)),
+          "expected #{file} to be what `rails new --skip-solid --skip-kamal --skip-thruster` writes"
+      end
+      ssl_on = ->(text) { text.sub(/^  # config\.assume_ssl = true$/, "  config.assume_ssl = true")
+        .sub(/^  # config\.force_ssl = true$/, "  config.force_ssl = true") }
+      assert_equal File.read(File.join(reference, "config/environments/production.rb")),
+        ssl_on.call(File.read(File.join(app_path, "config/environments/production.rb"))),
+        "expected production.rb to differ from the skip switches' only in the SSL lines"
+      refute File.exist?(File.join(reference, "bin/thrust")), "reference sanity check"
     end
   end
 

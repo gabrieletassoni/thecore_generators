@@ -88,10 +88,29 @@ turns the layout's `stylesheet_link_tag :app` (Propshaft's "every stylesheet" na
 raised AssetNotFound on every page with the layout) into `"application"`; a
 7.2 `rails new` without `--asset-pipeline=sprockets` still gets the warning.
 
-**Rails 8's other defaults are left as `rails new` writes them** (Solid Cache/Queue/Cable with
-their production databases, Kamal, Thruster): dev and test work with them, but the pilot's
-production shape (Sidekiq and Redis, one database, the Thecore Dockerfile) differs. The update
-path that adopts them in the Thecore stack (Solid Queue/Cable/Cache in place of Sidekiq and Redis, ADR 0035 in mytask-imas) is #27.
+**The Thecore 3 runtime, not Rails 8's defaults (#27, stage 1)**: release/3 apps run like the
+pilot: jobs on Sidekiq (thecore_backend_commons sets the production adapter), Action Cable on
+Redis (`REDIS_URL`), one production database (a Thecore deploy has one), the Thecore Dockerfile.
+Solid Queue/Cache/Cable, Kamal and Thruster come with release/4 (ADR 0035 in mytask-imas; stages
+2 and 3 of #27). The template produces what `rails new --skip-solid --skip-kamal --skip-thruster`
+writes, except SSL: `--skip-kamal` also turns on `force_ssl`/`assume_ssl`, while a Thecore
+installation terminates SSL at its proxy, so those stay commented out (which is why the caller
+should **not** pass the switches; the template does it). It sets the three switches on the
+generator (`self.options = options.merge(...)`, as Rails' own implied options do), so Rails'
+`run_kamal` (`kamal init`, `config/deploy.yml`, `.kamal/`) and `run_solid` (the
+`solid_*:install` commands: `config/{queue,cache,recurring}.yml`, `db/*_schema.rb`, `bin/jobs`,
+the Solid lines of `production.rb` and `cable.yml`), which run after the template, are skipped.
+What the skeleton already wrote is brought to the switches' shape: the five gems and their
+comments out of the Gemfile, the production `database.yml` from `primary`/`cache`/`queue`/`cable`
+to one database, the Solid Queue Puma plugin, `bin/thrust` and the Kamal lines of
+`.dockerignore`. Rails 7.2's `rails new` writes none of it, so every step is a no-op there. The
+template tests check the files (`assert_thecore3_runtime_practices`) and compare `database.yml`,
+`puma.rb`, `cable.yml`, `.dockerignore` and `production.rb` (SSL lines aside) byte for byte with
+a reference `rails new --skip-solid --skip-kamal --skip-thruster` of the same name
+(`assert_same_as_rails_skip_switches`, Rails 8 only); S1 checks the files on the real samples;
+S3 also checks that the
+lock and no file mention them, and boots the app in production: `queue_adapter_name` sidekiq,
+cable adapter redis, one production database.
 
 **No root `Dockerfile` (thecore_devcontainer#7)**: `rails new` writes a Kamal-style root
 `Dockerfile` and the `bin/docker-entrypoint` it runs. The Thecore build script

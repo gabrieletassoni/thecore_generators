@@ -1,3 +1,16 @@
+## 3.16.0
+
+- App template: new apps run on the Thecore 3 runtime, not Rails 8's defaults (#27, stage 1):
+  no Solid Queue/Cache/Cable, Kamal or Thruster; Sidekiq (set by thecore_backend_commons),
+  Action Cable on Redis and one production database, as the pilot. The template produces what
+  `rails new --skip-solid --skip-kamal --skip-thruster` writes, without the `force_ssl`/
+  `assume_ssl` that `--skip-kamal` turns on (the installation's proxy terminates SSL): it sets the
+  three switches on the generator, so Rails skips `kamal init` and the `solid_*:install`
+  commands, and removes the gems, the multi-database production config, the Solid Queue Puma
+  plugin, `bin/thrust` and the Kamal lines of `.dockerignore`. The template tests check every
+  file; S3 checks the lock and every file, and boots the app in production (Sidekiq, Redis cable,
+  one database).
+
 ## 3.15.0
 
 - **Rails 8.1** (Odoo #6091 in mytask-imas, ADR 0033 there): the gem accepts `railties >= 7.2,
@@ -11,7 +24,8 @@
   Rails 8 no longer generates and `thecore_backend_commons` extends at boot; the layout's
   `stylesheet_link_tag :app` (Propshaft's name) becomes `"application"`, which Sprockets resolves. `redis < 6` stays as
   the pilot's line, with its reason updated. Rails 8's Solid Cache/Queue/Cable, Kamal and
-  Thruster are left as `rails new` writes them; the update path that adopts them is #27.
+  Thruster are left as `rails new` writes them (3.16.0 replaces them with the Thecore 3 runtime;
+  the update path to them is #27).
 - App template: the installer chain (`THECORE_APP_TEMPLATE_RUN_INSTALLERS=true` or a "yes") works
   again; with the current Thecore ATOMs it failed on Rails 7.2 too. The template writes
   `config/initializers/00_devise_orm.rb` (Devise's ActiveRecord hook, since the engines load

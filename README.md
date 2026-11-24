@@ -393,9 +393,11 @@ New apps start on Rails 8.1. Rails 8's `rails new` only generates Propshaft (the
 `--asset-pipeline=sprockets` any more); the template switches the app to Sprockets, which
 RailsAdmin 3 and the Thecore UI need, writes `app/assets/config/manifest.js` and links
 `"application"` in the layout (Propshaft's `:app` doesn't exist in Sprockets). With Rails 7.2's
-`rails new`, keep passing `--asset-pipeline=sprockets`. Rails 8's other defaults (Solid
-Cache/Queue/Cable, Kamal, Thruster) are left as `rails new` writes them; the pilot's production
-shape is Sidekiq + Redis and one database; the update path that adopts them is #27.
+`rails new`, keep passing `--asset-pipeline=sprockets`. The app runs on the Thecore 3 runtime,
+not Rails 8's defaults: Sidekiq, Action Cable on Redis, one production database, no Solid
+Queue/Cache/Cable, Kamal or Thruster (they come with release/4, #27). The template does what
+`--skip-solid --skip-kamal --skip-thruster` do, so don't pass them: `--skip-kamal` would also
+turn on `force_ssl`, and a Thecore installation terminates SSL at its proxy.
 
 Run inside a devcontainer already created by the "Setup Devcontainer" VS Code command — a
 bootstrap step this template doesn't invoke or modify itself (that command's own code is
