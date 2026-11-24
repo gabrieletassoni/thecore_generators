@@ -64,25 +64,42 @@ Verified by hand once: a generated ATOM's `bin/rails test` under
 is `bundle install`, `bin/rails db:create`, `bin/rails test`, with no edit in between. Three
 things used to break that. With the API/Admin dependencies, the Thecore engines expect two
 host-app pieces a plugin dummy lacks, so `configure_dummy_host_app` writes the pilot ATOM's
-(`mytask`) `test/dummy/app/models/ability.rb` (empty CanCan `Ability`, as `cancan:ability` gives a
+(`mytask`) `test/dummy/app/models/ability.rb` (empty CanCan `Ability`, the same one the App template writes for a
 host app) and `test/dummy/config/initializers/devise.rb` (Devise's ORM hook, as `devise:install`
 does). Without them boot fails with `uninitialized constant Ability`, then `undefined method
-devise for User`. With `--skip-api-admin-deps` neither CanCan nor Devise is in the bundle, so
-those two files and `config/initializers/abilities.rb` (which includes `CanCan::Ability`) are not
-written. `setup_gemfile` always adds `gem 'minitest', '~> 5.25'`, the same pin as this gem's own
-Gemfile (Rails 7.2's runner breaks on Minitest 6). The ATOM has no lockfile, so the
-`--skip-api-admin-deps` variant used to resolve the newest Rails (8.1); `setup_gemspec` now writes
-`spec.add_dependency "rails", "~> 7.2"` (`RAILS_VERSION`, the Rails of Thecore 3 hosts), and the
-`--skip-api-admin-deps` test checks that the ATOM's `Gemfile.lock` resolves Rails 7.2.
+devise for User`. On Rails 8 a third piece is missing: `rails plugin new` no longer writes
+`app/channels/application_cable/`, while `thecore_backend_commons` includes its cable
+authentication into `ApplicationCable::Connection` at boot and its channels subclass
+`ApplicationCable::Channel`, so the dummy gets both classes too (`skip: true`, a 7.2 dummy already
+has them; without them: `uninitialized constant ApplicationCable`). With `--skip-api-admin-deps`
+neither CanCan nor Devise is in the bundle, so those files and `config/initializers/abilities.rb`
+(which includes `CanCan::Ability`) are not written. `setup_gemfile` always adds
+`gem 'minitest', '~> 5.25'`, the same pin as this gem's own Gemfile (Rails 7.2's runner breaks on
+Minitest 6), and `gem 'minitest-reporters', '~> 1.8'` for the CI's JUnit report. Thecore 3 hosts
+run Rails 7.2 or 8.1 (dual support, ADR 0033 in mytask-imas, Odoo #6091): `setup_gemspec` writes
+`spec.add_dependency "rails", ">= 7.2", "< 8.2"` (`RAILS_REQUIREMENTS`). The ATOM has no
+lockfile, so the `--skip-api-admin-deps` variant resolves the newest Rails the gemspec allows;
+its test checks the ATOM's `Gemfile.lock` resolves Rails 8.1, never 8.2. Since this gem's own
+suite runs on Rails 8.1, the `rails plugin new` in these tests generates an 8.1 ATOM.
 
-**It publishes like the real ATOMs** (thecore_devcontainer#14), except for the test gate: the
-real ATOMs now publish only after a green test job (this repo's own `gempush.yml`), while the
-generated `gempush.yml` and `.gitlab-ci.yml` still have none (#26). The repository starts on
-`release/3` (`git init -b release/3`, and the next steps push to it), the only branch that
-publishes. `gempush.yml` (GitHub, RubyGems) runs only on pushes to `release/3`, as in
-`model_driven_api`. `.gitlab-ci.yml` (`create_ci_files`, built by the private `gitlab_ci`) follows
-the pilot's spot ATOM (`mytask`): `build_gem` runs the image's `gem-compile.sh` only when
-`lib/*/version.rb` changes and never on a tag; it includes GitLab's `Jobs/SAST` and
+**It publishes like the real ATOMs** (thecore_devcontainer#14), test gate included (#26): a red
+test never publishes. The repository starts on `release/3` (`git init -b release/3`, and the next
+steps push to it), the only branch that publishes. `gempush.yml` ("Test and publish", the base
+ATOMs' own workflow, e.g. `thecore_backend_commons`) runs on pushes and pull requests on
+`release/3`: a `test` job on a PostgreSQL 15 service (Ruby 3.3, `bin/rails db:create`,
+`bin/rails test`, `JUNIT_REPORT_DIR` set, the report uploaded as the `junit` artifact even on
+failure) and a `publish` job with `needs: test`, only on a push. `publish` skips a version whose
+tag exists (`version_exists`), pushes the gem first and tags it after (a failed push leaves no tag,
+so re-running retries it), then creates the version's GitHub release with the JUnit report
+attached. `create_junit_report` writes `test/support/junit_report.rb` (minitest-reporters, active
+only when `JUNIT_REPORT_DIR` is set) and requires it from `test/test_helper.rb` right after
+`rails/test_help`; the end-to-end tests run the ATOM's suite a second time with
+`JUNIT_REPORT_DIR` and check the XML. `.gitlab-ci.yml` (`create_ci_files`, built by the private
+`gitlab_ci`) follows the pilot's spot ATOM (`mytask`): `test_gem` runs the suite on a
+`postgres:15-bookworm` service (alias `db`) on every branch push, never on a tag, with the JUnit
+report as an artifact and in the Tests tab; `build_gem` `needs: [test_gem]`, runs the image's
+`gem-compile.sh` only when `lib/*/version.rb` changes and never on a tag, and keeps the JUnit
+report as a never-expiring artifact; it includes GitLab's `Jobs/SAST` and
 `Jobs/Secret-Detection` templates (`needs: []`), and `security-summary` (`allow_failure`, scanner
 needs optional) runs `ruby script/security_summary.rb gl-sast-report.json
 gl-secret-detection-report.json`. `fetch_security_summary` gets that script and its test
@@ -94,7 +111,7 @@ gl-secret-detection-report.json`. `fetch_security_summary` gets that script and 
 `GITLAB_GEM_REPO_TARGET: https://HOST/`. With RubyGems the variable is left out: `gem-compile.sh`
 falls back to RubyGems only when it is unset, and the old `https://${GEM_HOST}/` was `https:///`
 with an empty `GEM_HOST`. `gempush.yml` (`gempush_yml`) follows the same host: with RubyGems it
-is unchanged (`RUBYGEMS_AUTH_TOKEN` secret, `gem push *.gem`); with another host it runs
+pushes with the `RUBYGEMS_AUTH_TOKEN` secret (`gem push *.gem`); with another host it runs
 `gem push --host https://HOST *.gem` with `GEM_HOST_API_KEY` from the `GEMS_REPO_CREDENTIALS`
 repository secret (the GitLab variable's name), since RubyGems would refuse a gem whose
 `allowed_push_host` names another server. The next steps then name the host's `source "https://HOST/" do` block,

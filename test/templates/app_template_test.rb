@@ -61,6 +61,39 @@ class AppTemplateTest < Minitest::Test
           "expected #{name} to stay above the ADR 0001 floor (refusing #{below_floor})"
       end
 
+      # New apps start on Rails 8.1 (Odoo #6091): 8.1.4.1 carries the 2026-11-04 security
+      # fixes, 8.2 is not supported by the 3.x ATOMs yet.
+      rails = dsl.dependencies.find { |d| d.name == "rails" }
+      assert rails, "expected an active `rails` line"
+      { "8.1.4.1" => true, "8.1.5" => true, "8.1.4" => false, "7.2.4" => false, "8.2.0" => false }.each do |version, ok|
+        assert_equal ok, rails.requirement.satisfied_by?(Gem::Version.new(version)),
+          "expected the Gemfile to #{ok ? "accept" : "refuse"} rails #{version}"
+      end
+
+      # What the Thecore engines need before anything can boot the app (Rails' own
+      # importmap:install, devise:install, every bin/rails command): Devise's ORM hook, since
+      # they load `User` at boot, and the app's Ability, which thecore_auth_commons references.
+      assert_match(%r{^require "devise/orm/active_record"$},
+        File.read(File.join(app_path, "config/initializers/00_devise_orm.rb")))
+      assert_match(/class Ability\n  include CanCan::Ability\n\n  def initialize\(user\); end/,
+        File.read(File.join(app_path, "app/models/ability.rb")))
+
+      # Sprockets, as the pilot and RailsAdmin 3 use: Rails 8's `rails new` only does Propshaft.
+      assert_match(/^gem ["']sprockets-rails["']/, gemfile)
+      refute_match(/^gem ["']propshaft["']/, gemfile)
+      assert_match(%r{^//= link_directory \.\./stylesheets \.css$},
+        File.read(File.join(app_path, "app/assets/config/manifest.js")))
+      # Rails 8's layout links the Propshaft name `:app`; Sprockets only has application.css.
+      layout = File.read(File.join(app_path, "app/views/layouts/application.html.erb"))
+      assert_match(/stylesheet_link_tag "application"/, layout)
+      refute_match(/stylesheet_link_tag :app\b/, layout)
+
+      # Rails 8 no longer generates them, and thecore_backend_commons extends both at boot.
+      assert_match(/class Connection < ActionCable::Connection::Base/,
+        File.read(File.join(app_path, "app/channels/application_cable/connection.rb")))
+      assert_match(/class Channel < ActionCable::Channel::Base/,
+        File.read(File.join(app_path, "app/channels/application_cable/channel.rb")))
+
       # Matched loosely (any 3.x, not a hardcoded minor) since this is this gem's own,
       # self-referential version constraint -- it will legitimately move on every
       # future release of thecore_generators itself, unlike the external ADR 0001
@@ -162,6 +195,55 @@ class AppTemplateTest < Minitest::Test
       assert_security_ci_practices(app_path)
       assert_gem_floor_practices(app_path)
       assert_github_workflow_practices(app_path)
+    end
+  end
+
+  # Seam S3 (Odoo #6091): the installer chain for real, as "Create App" runs it
+  # (THECORE_APP_TEMPLATE_RUN_INSTALLERS=true): a real bundle and every installer, then the
+  # generated app migrates, passes its own tests and eager-loads. Skipped unless
+  # THECORE_REAL_INSTALL=1: it needs the network, a PostgreSQL server (PG* variables) and
+  # this gem's Rails installed globally (`rails _<version>_ new`, outside this gem's bundle,
+  # so the app's own `bundle install` resolves its own Gemfile). Nothing runs with
+  # DATABASE_URL, which in the devcontainer names the host app's development database.
+  def test_app_with_installers_migrates_passes_its_tests_and_eager_loads
+    skip "set THECORE_REAL_INSTALL=1 to run the real installer chain" unless ENV["THECORE_REAL_INSTALL"] == "1"
+
+    Dir.mktmpdir do |dir|
+      app_path = File.join(dir, "thecore_s3_app")
+      env = {
+        "THECORE_SAMPLES_SOURCE" => SAMPLES_FIXTURE_DIR,
+        "THECORE_APP_TEMPLATE_NON_INTERACTIVE" => "1",
+        "THECORE_APP_TEMPLATE_RUN_INSTALLERS" => "true",
+        "DATABASE_URL" => nil,
+        "RAILS_ENV" => nil
+      }
+      run = lambda do |*command, chdir:, extra: {}|
+        out, status = Bundler.with_unbundled_env { Open3.capture2e(env.merge(extra), *command, chdir: chdir) }
+        assert status.success?, "`#{command.join(" ")}` failed:\n#{out}"
+        out
+      end
+
+      run.call("rails", "_#{Rails.version}_", "new", app_path, "--database=postgresql", "--skip-git", "--quiet",
+        "-m", TEMPLATE_PATH, chdir: dir)
+      assert_match(%r{^\s*require ["']devise/orm/active_record["']},
+        File.read(File.join(app_path, "config/initializers/devise.rb")),
+        "expected devise:install to write the ActiveRecord ORM hook, not this gem's generator ORM")
+
+      test_env = { "RAILS_ENV" => "test" }
+      begin
+        run.call("bin/rails", "db:create", "db:migrate", chdir: app_path, extra: test_env)
+        output = run.call("bin/rails", "test", chdir: app_path, extra: test_env)
+        # The fixture samples bring no tests of their own: what matters is a green, booting suite.
+        assert_match(/\d+ runs, \d+ assertions, 0 failures, 0 errors/, output)
+        run.call("bin/rails", "runner", "Rails.application.eager_load!", chdir: app_path, extra: test_env)
+        # A page with the app's own layout renders (its stylesheet resolves in Sprockets).
+        rendered = run.call("bin/rails", "runner",
+          'print ApplicationController.render(inline: "s3-ok", layout: "application")',
+          chdir: app_path, extra: test_env)
+        assert_match(/s3-ok/, rendered)
+      ensure
+        Bundler.with_unbundled_env { Open3.capture2e(env.merge(test_env), "bin/rails", "db:drop", chdir: app_path) }
+      end
     end
   end
 
@@ -467,14 +549,14 @@ class AppTemplateTest < Minitest::Test
   # The transitive ones (thecore_auth_commons, thecore_backend_commons) need their own
   # line for that.
   GEM_FLOORS = {
-    "rails" => %w[7.2.4 7.2.3.2], # Rails 7.2.3.1/7.2.3.2 security fixes, carried by 7.2.4
+    "rails" => %w[8.1.4.1 8.1.4], # the 2026-11-04 security fixes (21 advisories)
     "puma" => %w[7.2.1 7.2.0], # PROXY protocol v1 CVE-2026-47736/47737
-    "model_driven_api" => %w[3.13.1 3.13.0], # the API never instantiates the class named by the path
+    "model_driven_api" => %w[3.13.2 3.13.1], # JSON with include: works on Rails 8.1 (3.13.1: no class instantiated from the path)
     "thecore_auth_commons" => %w[3.6.3 3.6.2], # OAuth takes the identity only from OmniAuth
-    "thecore_backend_commons" => %w[3.10.0 3.9.1], # no job retries by default, failures set capped at 1
+    "thecore_backend_commons" => %w[3.11.0 3.10.0], # resolves on Rails 8.1 (3.10.0: no job retries, failures capped)
     "thecore_ui_rails_admin" => %w[3.8.7 3.8.6] # RailsAdmin's User create form answered 500 under Devise 5
   }.freeze
-  # Action Cable 7.2's Redis adapter requires `redis >= 4, < 6` when it loads.
+  # Kept on the pilot's redis 5 line: redis 6 is untried with redis-namespace and Sidekiq 7.
   REDIS_BROKEN = "6.0.0"
 
   # The pilot's Gemfile floors and pins (thecore_devcontainer#17), checked twice: on the
@@ -495,7 +577,7 @@ class AppTemplateTest < Minitest::Test
     end
     assert requirements["redis"], "expected the Gemfile to pin redis for Action Cable's adapter"
     refute requirements["redis"].all? { |r| r.satisfied_by?(Gem::Version.new(REDIS_BROKEN)) },
-      "expected the Gemfile to refuse redis #{REDIS_BROKEN}, which Action Cable 7.2 refuses at load"
+      "expected the Gemfile to refuse redis #{REDIS_BROKEN}, which the pilot hasn't tried"
 
     stdout, stderr, status = Bundler.with_unbundled_env do
       Open3.capture3({ "BUNDLE_GEMFILE" => gemfile }, "bundle", "lock", chdir: app_path)

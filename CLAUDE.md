@@ -44,7 +44,7 @@ test/                         dummy/ (PostgreSQL Rails app), generators/, tasks/
 
 ## Tests
 
-**Postgres-only**, never SQLite: `test/dummy` runs on PostgreSQL (`PG*` env vars, default `db`/`5432`/`postgres`/`postgres`), and `test/dummy/config/boot.rb` forces the database to `thecore_generators_<RAILS_ENV>`, so a run never touches the host app's DB. `minitest` stays pinned to `~> 5.25` (Rails 7.2).
+**Postgres-only**, never SQLite: `test/dummy` runs on PostgreSQL (`PG*` env vars, default `db`/`5432`/`postgres`/`postgres`), and `test/dummy/config/boot.rb` forces the database to `thecore_generators_<RAILS_ENV>`, so a run never touches the host app's DB. The suite runs on Rails 8.1 (the gem accepts `railties >= 7.2, < 8.2`; `RAILS_VERSION=7.2` runs it on 7.2.4, best effort), `minitest` stays pinned to `~> 5.25`.
 
 ```bash
 bundle install
@@ -53,13 +53,14 @@ bundle exec rake test
 JUNIT_REPORT_DIR=tmp/junit bundle exec rake test                           # + JUnit XML, as CI does
 bundle exec ruby -Itest test/generators/thecore/model_generator_test.rb   # single file
 THECORE_REAL_SAMPLES_DIR=<thecore checkout>/samples bundle exec rake test  # + real-samples S1/S2
+THECORE_REAL_INSTALL=1 bundle exec ruby -Itest test/templates/app_template_test.rb -n /installers/  # S3, real installer chain
 ```
 
 Every change gets tests; keep `CLAUDE.md` or the `docs/agents/` file it points to accurate whenever the behaviour it describes changes. Details: `docs/agents/testing.md`.
 
 ## Releasing
 
-Version lives in `lib/thecore_generators/version.rb` (currently `3.14.0`). Pushing a commit that
+Version lives in `lib/thecore_generators/version.rb` (currently `3.15.0`). Pushing a commit that
 bumps it publishes it: `.github/workflows/gempush.yml` runs the test suite (PostgreSQL 15, Ruby 3.3, JUnit report kept as the `junit` artifact) on every push and pull request on `release/3`; on a push its `publish` job runs only when the tests are green, and only for a version in `lib/*/version.rb` with no tag yet: it pushes the gem to RubyGems, then tags it and creates the GitHub release with the JUnit report attached. A red test never publishes (the former separate `ci.yml` is merged into it). Same pattern as the other gems in
 this ecosystem.
 

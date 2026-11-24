@@ -69,12 +69,15 @@ module Thecore
 
       # This gem's own ADR 0001 floor (matching the App template's already-corrected
       # versions) — not createATOM.js's stale "~> 3.1"/"~> 3.2".
-      MODEL_DRIVEN_API_VERSION = "~> 3.9"
+      # model_driven_api 3.13.2: older ones raise FrozenError rendering JSON with `include:` on
+      # Rails 8.1 (the App template's floor too).
+      MODEL_DRIVEN_API_REQUIREMENTS = ["~> 3.13", ">= 3.13.2"].freeze
       THECORE_UI_RAILS_ADMIN_VERSION = "~> 3.8"
       MINITEST_VERSION = "~> 5.25"
-      # Thecore 3 hosts run Rails 7.2. The ATOM commits no lockfile, so without this its own bundle
-      # (with --skip-api-admin-deps nothing else holds Rails back) resolves the newest Rails.
-      RAILS_VERSION = "~> 7.2"
+      # Thecore 3 hosts run Rails 7.2 or 8.1 (dual support, ADR 0033 in mytask-imas, Odoo #6091).
+      # The ATOM commits no lockfile, so without the upper bound its own bundle (with
+      # --skip-api-admin-deps nothing else holds Rails back) would resolve an unsupported 8.2.
+      RAILS_REQUIREMENTS = [">= 7.2", "< 8.2"].freeze
       GEM_HOST_PATTERN = /\A[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d+)?\z/i
 
       # Faithful port of templates/createATOM/after_initialize.rb /
@@ -98,45 +101,119 @@ module Thecore
         # )
       RUBY
 
-      # Faithful port of createATOM.js's addCICDFiles gempush.yml, with its two
-      # long-standing bugs fixed (thecore_generators#20 acceptance criteria): the awk
-      # pipeline computing the version string had a stray, unmatched `)` instead of a
-      # closing `}'`; and `version_exists` was referenced in two steps' `if:`
-      # conditions but never actually set anywhere (the "check" step only ever did
-      # `echo $?`), so those two steps have never run for any ATOM generated this way.
-      # Fixed here by actually writing `version_exists` to $GITHUB_ENV based on
-      # whether a git tag for the computed version already exists - kept as an
-      # `env.*`-style if: condition (not switched to `steps.*.outputs.*`) to stay as
-      # close to the original's structure as the fix allows.
-      GEMPUSH_YML_CONTENT = <<~YAML
-        name: Ruby Gem
+      # The base ATOMs' gempush.yml (thecore_generators#26, Odoo #6088 in mytask-imas): every push
+      # and pull request on release/3 runs the test suite on PostgreSQL 15 (never SQLite), and a
+      # push publishes only after it is green (`needs: test`). The publish job pushes the gem
+      # first and tags it after, so a failed push leaves no tag and re-running the workflow
+      # retries it; `version_exists` (from the version's tag) skips a version already published.
+      # The JUnit report of the green run is attached to the version's GitHub release, the
+      # published version's test evidence. The publish step itself (#gempush_yml) depends on
+      # --gem-host. Started from createATOM.js's addCICDFiles, whose two bugs (an unmatched `)`
+      # in the version awk, `version_exists` never set) thecore_generators#20 fixed.
+      GEMPUSH_TEST_AND_CHECK = <<~YAML
+        name: Test and publish
+
         on:
           push:
-            branches:
-              - release/3
+            branches: [ release/3 ]
+          pull_request:
+            branches: [ release/3 ]
+
         jobs:
-          build:
-            name: Build + Publish
+          test:
+            name: Test suite
             runs-on: ubuntu-latest
+
+            services:
+              postgres:
+                image: postgres:15-bookworm
+                env:
+                  POSTGRES_PASSWORD: postgres
+                ports:
+                  - 5432:5432
+                options: >-
+                  --health-cmd pg_isready
+                  --health-interval 5s
+                  --health-timeout 5s
+                  --health-retries 10
+
+            # test/dummy/config/database.yml reads PGHOST/PGPORT/PGUSER/PGPASSWORD.
+            env:
+              PGHOST: localhost
+              PGPORT: 5432
+              PGUSER: postgres
+              PGPASSWORD: postgres
+              RAILS_ENV: test
+              CI: true
+              JUNIT_REPORT_DIR: ${{ github.workspace }}/tmp/junit
+
             steps:
-              - uses: actions/checkout@v3
+              - uses: actions/checkout@v4
+              - uses: ruby/setup-ruby@v1
+                with:
+                  ruby-version: '3.3'
+                  bundler-cache: true
+              - name: Create the test database
+                run: bin/rails db:create
+              - name: Run the test suite
+                run: bin/rails test
+              - name: Keep the JUnit report
+                if: always()
+                uses: actions/upload-artifact@v4
+                with:
+                  name: junit
+                  path: tmp/junit/
+                  if-no-files-found: error
+
+          publish:
+            name: Publish + Tag
+            needs: test
+            if: github.event_name == 'push'
+            runs-on: ubuntu-latest
+            permissions:
+              contents: write # push the version tag and create its release
+            steps:
+              - uses: actions/checkout@v4
+                with:
+                  fetch-depth: 0
               - name: Check if version already exists
                 run: |
-                  version=$(grep -oP 'VERSION = "\\K[^"]+' lib/*/version.rb | awk -F'.' '{print $1"."$2"."$3}')
-                  git fetch --unshallow --tags
-                  if git rev-parse "$version" >/dev/null 2>&1; then
+                  version=$(grep -oP 'VERSION = "\\K[^"]+' lib/*/version.rb)
+                  echo "version=$version" >> "$GITHUB_ENV"
+                  if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
                     echo "version_exists=true" >> "$GITHUB_ENV"
                   else
                     echo "version_exists=false" >> "$GITHUB_ENV"
                   fi
-              - name: Set git tag
+              - uses: ruby/setup-ruby@v1
                 if: env.version_exists == 'false'
-                run: |
-                  git config --local user.email "noreply@alchemic.it"
-                  git config --local user.name "AlchemicIT"
-                  version=$(grep -oP 'VERSION = "\\K[^"]+' lib/*/version.rb | awk -F'.' '{print $1"."$2"."$3}')
-                  git tag -a $version -m "Version $version"
-                  git push --tags
+                with:
+                  ruby-version: '3.3'
+              - name: Get the JUnit report
+                if: env.version_exists == 'false'
+                uses: actions/download-artifact@v4
+                with:
+                  name: junit
+                  path: junit
+      YAML
+
+      GEMPUSH_TAG_AND_RELEASE = <<~YAML
+        - name: Set git tag
+          if: env.version_exists == 'false'
+          run: |
+            git config --local user.email "noreply@alchemic.it"
+            git config --local user.name "AlchemicIT"
+            git tag -a "$version" -m "Version $version"
+            git push origin "refs/tags/$version"
+        - name: Create the release with the JUnit report
+          if: env.version_exists == 'false'
+          env:
+            GH_TOKEN: ${{ github.token }}
+          run: |
+            gem_name=$(basename *.gemspec .gemspec)
+            for f in junit/*.xml; do mv "$f" "junit/$gem_name-$version-$(basename "$f")"; done
+            gh release create "$version" --verify-tag --title "$version" \\
+              --notes "Test suite green on PostgreSQL 15 (Ruby 3.3). JUnit report attached." junit/*.xml
       YAML
 
       GEMPUSH_RUBYGEMS_STEP = <<~YAML
@@ -169,11 +246,26 @@ module Thecore
       YAML
 
       GITLAB_CI_HEADER = <<~YAML
-        # Publish: build_gem builds and pushes the gem only when lib/*/version.rb changes (see
-        # CLAUDE.md). Security: SAST and Secret Detection report only; security-summary lists their
+        # Test: test_gem runs the suite on PostgreSQL 15 on every branch push, with a JUnit report.
+        # Publish: build_gem builds and pushes the gem only when lib/*/version.rb changes and only
+        # after a green test_gem (see CLAUDE.md). Security: SAST and Secret Detection report only; security-summary lists their
         # findings and turns orange when there are any. CVEs in the dependencies are checked by the
         # host app's bundler-audit, since this gem commits no Gemfile.lock.
       YAML
+
+      # Same file as the base ATOMs' test/support/junit_report.rb (Odoo #6088 in mytask-imas).
+      JUNIT_REPORT_CONTENT = <<~RUBY
+        # JUnit XML report for CI, kept with every published version as its test evidence.
+        # Off unless JUNIT_REPORT_DIR is set, so a local run keeps the normal Rails output.
+        if ENV["JUNIT_REPORT_DIR"].present?
+          require "minitest/reporters"
+          Minitest::Reporters.use!([
+            Minitest::Reporters::DefaultReporter.new,
+            Minitest::Reporters::JUnitReporter.new(ENV["JUNIT_REPORT_DIR"], true, single_file: true)
+          ])
+        end
+      RUBY
+      MINITEST_REPORTERS_VERSION = "~> 1.8"
 
       DUMMY_ABILITY_CONTENT = <<~RUBY
         # The host app's Ability, which the Thecore engines reference. Permissions come from
@@ -190,6 +282,24 @@ module Thecore
           config.mailer_sender = "please-change-me@example.com"
           require "devise/orm/active_record"
           config.stretches = Rails.env.test? ? 1 : 12
+        end
+      RUBY
+
+      # Rails 8 stopped generating app/channels/application_cable (7.2 still did), but
+      # thecore_backend_commons includes its cable authentication into
+      # ApplicationCable::Connection at boot and its channels subclass ApplicationCable::Channel:
+      # without these the dummy app raises NameError before any test runs.
+      DUMMY_CABLE_CONNECTION_CONTENT = <<~RUBY
+        module ApplicationCable
+          class Connection < ActionCable::Connection::Base
+          end
+        end
+      RUBY
+
+      DUMMY_CABLE_CHANNEL_CONTENT = <<~RUBY
+        module ApplicationCable
+          class Channel < ActionCable::Channel::Base
+          end
         end
       RUBY
 
@@ -347,15 +457,20 @@ module Thecore
       end
 
       # The host-app pieces the Thecore engines expect, which a `rails plugin new` dummy lacks:
-      # an `Ability` class (the App template gets it from `cancan:ability`) and Devise's ORM hook
+      # an `Ability` class (the App template writes the pilot's empty one), Devise's ORM hook
       # (`devise:install`), without which thecore_auth_commons' `User` hits `undefined method
-      # devise` at boot. Same files as the pilot ATOM's (mytask) dummy. Only with the API/Admin
+      # devise` at boot, and ApplicationCable's base classes, which Rails 8 no longer generates
+      # (`skip: true` keeps the ones a Rails 7.2 dummy already has). Same files as the pilot ATOM's (mytask) dummy. Only with the API/Admin
       # dependencies: without them neither CanCan nor Devise is in the bundle.
       def configure_dummy_host_app
         return unless @include_api_admin_deps
 
         create_file File.join(atom_root, "test/dummy/app/models/ability.rb"), DUMMY_ABILITY_CONTENT
         create_file File.join(atom_root, "test/dummy/config/initializers/devise.rb"), DUMMY_DEVISE_CONTENT
+        create_file File.join(atom_root, "test/dummy/app/channels/application_cable/connection.rb"),
+          DUMMY_CABLE_CONNECTION_CONTENT, skip: true
+        create_file File.join(atom_root, "test/dummy/app/channels/application_cable/channel.rb"),
+          DUMMY_CABLE_CHANNEL_CONTENT, skip: true
       end
 
       # #create_file already `mkdir_p`s its own parent directory, so a separate
@@ -402,6 +517,14 @@ module Thecore
         create_file File.join(atom_root, ".gitlab-ci.yml"), GITLAB_CI_HEADER + gitlab_ci.to_yaml.delete_prefix("---\n")
       end
 
+      # The JUnit report both CIs keep, loaded by the test helper right after the dummy app boots.
+      def create_junit_report
+        create_file File.join(atom_root, "test/support/junit_report.rb"), JUNIT_REPORT_CONTENT
+        inject_into_file File.join(atom_root, "test/test_helper.rb"),
+          "require_relative \"support/junit_report\"\n",
+          after: %r{^require "rails/test_help"\n}
+      end
+
       def fetch_security_summary
         %w[script/security_summary.rb test/script/security_summary_test.rb].each do |file|
           Thecore::Generators::SampleFetcher.fetch_thecore_sample(
@@ -422,7 +545,9 @@ module Thecore
         # in the ATOM's lockfile-less bundle does (the --skip-api-admin-deps variant even floats
         # to the newest Rails, where 5.x works too: checked on Rails 8.1).
         gemfile_addition << "gem 'minitest', '#{MINITEST_VERSION}'\n"
-        gemfile_addition << "gem 'model_driven_api', '#{MODEL_DRIVEN_API_VERSION}'\n" \
+        # The CI's JUnit report (test/support/junit_report.rb).
+        gemfile_addition << "gem 'minitest-reporters', '#{MINITEST_REPORTERS_VERSION}'\n"
+        gemfile_addition << "gem 'model_driven_api', #{MODEL_DRIVEN_API_REQUIREMENTS.map { |r| "'#{r}'" }.join(", ")}\n" \
           "gem 'thecore_ui_rails_admin', '#{THECORE_UI_RAILS_ADMIN_VERSION}'\n" if @include_api_admin_deps
         append_to_file gemfile_path, gemfile_addition
 
@@ -453,7 +578,7 @@ module Thecore
         content = content.sub(/^(\s*spec\.add_dependency\s+["']rails["'].*)$/) do
           next Regexp.last_match(1) unless @include_api_admin_deps
 
-          "#{Regexp.last_match(1)}\n  spec.add_dependency \"model_driven_api\", \"#{MODEL_DRIVEN_API_VERSION}\"\n" \
+          "#{Regexp.last_match(1)}\n  spec.add_dependency \"model_driven_api\", #{MODEL_DRIVEN_API_REQUIREMENTS.map(&:inspect).join(", ")}\n" \
             "  spec.add_dependency \"thecore_ui_rails_admin\", \"#{THECORE_UI_RAILS_ADMIN_VERSION}\""
         end
         content = content.sub(/^\s*spec\.authors\s*=.*$/, "  spec.authors     = [#{@author.to_s.inspect}]")
@@ -461,7 +586,7 @@ module Thecore
         content = content.sub(/^\s*spec\.homepage\s*=.*$/, "  spec.homepage    = #{@url.to_s.inspect}")
         content = content.sub(/^\s*spec\.summary\s*=.*$/, "  spec.summary     = #{@summary.to_s.inspect}")
         content = content.sub(/^\s*spec\.description\s*=.*$/, "  spec.description = #{@description.to_s.inspect}")
-        content = content.sub(/^(\s*spec\.add_dependency\s+["']rails["']).*$/) { "#{Regexp.last_match(1)}, #{RAILS_VERSION.inspect}" }
+        content = content.sub(/^(\s*spec\.add_dependency\s+["']rails["']).*$/) { "#{Regexp.last_match(1)}, #{RAILS_REQUIREMENTS.map(&:inspect).join(", ")}" }
         content = content.sub(/^\s*spec\.metadata\["allowed_push_host"\]\s*=.*$/,
           "  spec.metadata[\"allowed_push_host\"] = \"https://#{gem_host}\"")
         content = content.sub(/^\s*spec\.metadata\["source_code_uri"\]\s*=.*$/,
@@ -579,6 +704,32 @@ module Thecore
           "image" => "gabrieletassoni/vscode-devcontainers-thecore:3",
           "variables" => variables,
           "stages" => %w[test build],
+          # thecore_generators#26 (mytask's own CI): the dummy app on PostgreSQL 15 (never
+          # SQLite) on every branch push; build_gem needs it, so a red test never publishes.
+          "test_gem" => {
+            "stage" => "test",
+            "rules" => [
+              { "if" => "$CI_COMMIT_TAG", "when" => "never" },
+              { "if" => "$CI_COMMIT_BRANCH" },
+            ],
+            "services" => [{ "name" => "postgres:15-bookworm", "alias" => "db" }],
+            "variables" => {
+              "POSTGRES_PASSWORD" => "postgres", # Throwaway service container, gone with the job.
+              "PGHOST" => "db",
+              "PGUSER" => "postgres",
+              "PGPASSWORD" => "postgres",
+              "RAILS_ENV" => "test",
+              "CI" => "true",
+              "JUNIT_REPORT_DIR" => "$CI_PROJECT_DIR/tmp/junit",
+            },
+            "script" => ["bundle install --quiet", "bin/rails db:create", "bin/rails test"],
+            "artifacts" => {
+              "when" => "always",
+              "expire_in" => "30 days",
+              "paths" => ["tmp/junit/"],
+              "reports" => { "junit" => "tmp/junit/*.xml" },
+            },
+          },
           "build_gem" => {
             "rules" => [
               { "if" => "$CI_COMMIT_TAG", "when" => "never" },
@@ -586,7 +737,15 @@ module Thecore
               { "when" => "never" },
             ],
             "stage" => "build",
+            "needs" => ["test_gem"], # also downloads test_gem's tmp/junit/
             "script" => ["/usr/bin/gem-compile.sh"],
+            # The published version's test evidence: the JUnit report of the green run that
+            # gated it, kept in the pipeline of the commit that changed version.rb.
+            "artifacts" => {
+              "name" => "junit-$CI_PROJECT_NAME-$CI_COMMIT_SHORT_SHA",
+              "expire_in" => "never",
+              "paths" => ["tmp/junit/"],
+            },
           },
           "include" => [
             { "template" => "Jobs/SAST.gitlab-ci.yml" },
@@ -625,7 +784,7 @@ module Thecore
       def gempush_yml
         step = rubygems_host? ? GEMPUSH_RUBYGEMS_STEP : format(GEMPUSH_PRIVATE_HOST_STEP, host: gem_host, url: "https://#{gem_host}")
         # The step is a heredoc of its own: indent it to the steps list's level.
-        GEMPUSH_YML_CONTENT + step.gsub(/^/, "      ")
+        GEMPUSH_TEST_AND_CHECK + (step + GEMPUSH_TAG_AND_RELEASE).gsub(/^/, "      ")
       end
 
       def rubygems_host?

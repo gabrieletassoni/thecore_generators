@@ -30,7 +30,7 @@ Gem::Specification.new do |spec|
 
   # This gem hooks Rails' generator machinery only — it does not need the
   # full `rails` gem at runtime, just railties (Rails::Railtie,
-  # Rails::Generators). Pinned to the Rails 7.2 line this branch targets;
-  # release/4 will bump this for Rails 8.
-  spec.add_dependency "railties", "~> 7.2"
+  # Rails::Generators). Rails 7.2 and 8.1 (dual support on release/3, ADR 0033 in
+  # mytask-imas, Odoo #6091); 8.2 is not supported yet.
+  spec.add_dependency "railties", ">= 7.2", "< 8.2"
 end

@@ -136,7 +136,8 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
       assert_match(/spec\.summary\s*=\s*"TCP Debugger"/, content)
       assert_match(/spec\.description\s*=\s*"Debugs TCP connections"/, content)
       assert_match(/spec\.add_dependency "rails"/, content)
-      assert_match(/spec\.add_dependency "model_driven_api", "~> 3\.9"/, content)
+      # 3.13.2: older ones raise FrozenError rendering JSON with include: on Rails 8.1.
+      assert_match(/spec\.add_dependency "model_driven_api", "~> 3\.13", ">= 3\.13\.2"/, content)
       assert_match(/spec\.add_dependency "thecore_ui_rails_admin", "~> 3\.8"/, content)
       assert_match(/spec\.metadata\["allowed_push_host"\]\s*=\s*"https:\/\/rubygems\.org"/, content)
       assert_match(/spec\.metadata\["source_code_uri"\]\s*=\s*spec\.homepage/, content)
@@ -145,7 +146,7 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
 
     assert_file "#{atom}/Gemfile" do |content|
       assert_match(/^gem ["']pg["']/, content)
-      assert_match(/gem 'model_driven_api', '~> 3\.9'/, content)
+      assert_match(/gem 'model_driven_api', '~> 3\.13', '>= 3\.13\.2'/, content)
       assert_match(/gem 'thecore_ui_rails_admin', '~> 3\.8'/, content)
     end
     assert_file "#{atom}/lib/tcp_debugger.rb" do |content|
@@ -172,6 +173,12 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     # The host-app pieces the Thecore engines need at boot, in the dummy app.
     assert_file "#{atom}/test/dummy/app/models/ability.rb", /class Ability\n  include CanCan::Ability/
     assert_file "#{atom}/test/dummy/config/initializers/devise.rb", %r{require "devise/orm/active_record"}
+    # Rails 8 no longer generates app/channels/application_cable, which thecore_backend_commons
+    # extends at boot (its channels subclass ApplicationCable::Channel).
+    assert_file "#{atom}/test/dummy/app/channels/application_cable/connection.rb",
+      /module ApplicationCable\n  class Connection < ActionCable::Connection::Base/
+    assert_file "#{atom}/test/dummy/app/channels/application_cable/channel.rb",
+      /module ApplicationCable\n  class Channel < ActionCable::Channel::Base/
     assert_file "#{atom}/Gemfile", /^gem 'minitest', '~> 5\.25'$/
 
     assert_file "#{atom}/config/locales/en.yml" do |content|
@@ -180,13 +187,16 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     assert_file "#{atom}/config/locales/it.yml"
 
     assert_file "#{atom}/.github/workflows/gempush.yml" do |content|
-      # The two fixed bugs: correct awk closing syntax, and version_exists actually set.
-      assert_match(/awk -F'\.' '\{print \$1"\."\$2"\."\$3\}'/, content)
-      refute_match(/\$3\}\)/, content)
+      # A version is published once: version_exists is set from its tag and gates every publish step.
       assert_match(/echo "version_exists=true" >> "\$GITHUB_ENV"/, content)
       assert_match(/echo "version_exists=false" >> "\$GITHUB_ENV"/, content)
       assert_match(/if: env\.version_exists == 'false'/, content)
     end
+    assert_github_test_gate(atom)
+    # The JUnit report the CI keeps: minitest-reporters, active only when JUNIT_REPORT_DIR is set.
+    assert_file "#{atom}/test/support/junit_report.rb", /if ENV\["JUNIT_REPORT_DIR"\]/
+    assert_file "#{atom}/test/test_helper.rb", %r{require_relative "support/junit_report"}
+    assert_file "#{atom}/Gemfile", /^gem 'minitest-reporters', '~> 1\.8'$/
     # No --gem-host: GitHub publishes to RubyGems, with the RubyGems token.
     publish = gempush_publish_step(atom)
     assert_match(/^gem push \*\.gem$/, publish["run"])
@@ -217,8 +227,11 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     assert_equal "release/3", branch
     assert_includes output, "git push -u origin release/3"
     gempush = YAML.safe_load(File.read(File.join(destination_root, atom, ".github/workflows/gempush.yml")))
-    assert_equal({ "push" => { "branches" => ["release/3"] } }, gempush.fetch(true, gempush["on"]),
-      "expected the GitHub publish workflow to run only on pushes to release/3")
+    assert_equal({ "push" => { "branches" => ["release/3"] }, "pull_request" => { "branches" => ["release/3"] } },
+      gempush.fetch(true, gempush["on"]),
+      "expected the GitHub workflow to run on pushes and pull requests on release/3 only")
+    assert_equal "github.event_name == 'push'", gempush.dig("jobs", "publish", "if"),
+      "expected a pull request to run the tests but never publish"
 
     assert_file "Gemfile" do |content|
       assert_match(/gem "tcp_debugger", path: "vendor\/submodules\/tcp_debugger"/, content)
@@ -247,7 +260,8 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
       refute_match(/require 'thecore_ui_rails_admin'/, content)
     end
     assert_file "#{atom}/tcp_debugger.gemspec" do |content|
-      assert_match(/spec\.add_dependency "rails", "~> 7\.2"$/, content)
+      # Dual support (Odoo #6091): Thecore 3 hosts run Rails 7.2 or 8.1, never 8.2 yet.
+      assert_match(/spec\.add_dependency "rails", ">= 7\.2", "< 8\.2"$/, content)
       refute_match(/model_driven_api/, content)
       refute_match(/thecore_ui_rails_admin/, content)
       # --gem-host: the gem is pushed to the private server, and only there.
@@ -273,8 +287,8 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     assert_no_file "#{atom}/test/dummy/config/initializers/devise.rb"
 
     assert_generated_atom_tests_pass(atom)
-    # Thecore 3 hosts run Rails 7.2: without a lockfile the ATOM must not resolve a newer Rails.
-    assert_match(/^    rails \(7\.2\.\d/, File.read(File.join(destination_root, atom, "Gemfile.lock")))
+    # Without a lockfile the ATOM resolves the newest Rails its gemspec allows: 8.1, never 8.2.
+    assert_match(/^    rails \(8\.1\.\d/, File.read(File.join(destination_root, atom, "Gemfile.lock")))
   end
 
   test "--gem-host accepts only a host name, not a path" do
@@ -373,7 +387,7 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
   # The step of the generated GitHub workflow that runs `gem push`.
   def gempush_publish_step(atom)
     gempush = YAML.safe_load(File.read(File.join(destination_root, atom, ".github/workflows/gempush.yml")))
-    gempush.dig("jobs", "build", "steps").find { |step| step["run"].to_s.include?("gem push") }
+    gempush.dig("jobs", "publish", "steps").find { |step| step["run"].to_s.include?("gem push") }
   end
 
   # Runs the generated dummy app's config/boot.rb in a clean Ruby process, as the test
@@ -410,12 +424,52 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
       output
     end.last
     assert_match(/[1-9]\d* runs, \d+ assertions, 0 failures, 0 errors/, output, "the ATOM's own tests didn't run")
+
+    # As CI runs it: the same suite writes the JUnit report the release keeps.
+    junit_dir = File.join(atom_path, "tmp", "junit")
+    output, status = Bundler.with_unbundled_env do
+      Open3.capture2e(env.merge("JUNIT_REPORT_DIR" => junit_dir), "bin/rails test", chdir: atom_path)
+    end
+    assert status.success?, "`bin/rails test` with JUNIT_REPORT_DIR failed in the generated ATOM:\n#{output}"
+    reports = Dir[File.join(junit_dir, "*.xml")]
+    assert_equal 1, reports.size, "expected one JUnit report in #{junit_dir}"
+    assert_match(/<testsuite /, File.read(reports.first))
+  end
+
+  # GitHub (thecore_generators#26, the base ATOMs' gempush.yml): a test job on PostgreSQL 15 that
+  # keeps the JUnit report, and a publish job that runs only after it and only on a push.
+  def assert_github_test_gate(atom)
+    gempush = YAML.safe_load(File.read(File.join(destination_root, atom, ".github/workflows/gempush.yml")))
+    test = gempush.dig("jobs", "test") || flunk("expected a `test` job in gempush.yml")
+    assert_equal "postgres:15-bookworm", test.dig("services", "postgres", "image")
+    assert_equal "${{ github.workspace }}/tmp/junit", test.dig("env", "JUNIT_REPORT_DIR")
+    runs = test["steps"].map { |step| step["run"] }.compact
+    assert_includes runs, "bin/rails db:create"
+    assert_includes runs, "bin/rails test"
+    upload = test["steps"].find { |step| step["uses"].to_s.start_with?("actions/upload-artifact") }
+    assert upload, "expected the test job to keep the JUnit report as an artifact"
+    assert_equal "always()", upload["if"]
+    assert_equal "test", gempush.dig("jobs", "publish", "needs"), "expected publish to need the green test job"
+    publish_runs = gempush.dig("jobs", "publish", "steps").map { |step| step["run"].to_s }
+    push_at = publish_runs.index { |run| run.include?("gem push") }
+    tag_at = publish_runs.index { |run| run.include?("git tag") }
+    assert_operator push_at, :<, tag_at, "expected the gem pushed before the tag, so a failed push can be retried"
   end
 
   # The real spot ATOMs' GitLab CI (mytask): build and push only when lib/*/version.rb changes
   # (never on a tag), plus GitLab CE's SAST and Secret Detection, whose findings the
   # security-summary job turns into an orange job.
   def assert_gitlab_publish_ci(data)
+    # thecore_generators#26 (mytask's .gitlab-ci.yml): test_gem on PostgreSQL 15 on every branch
+    # push, and build_gem only after it, keeping the published version's JUnit report.
+    test_gem = data.fetch("test_gem")
+    assert_equal "test", test_gem["stage"]
+    assert_equal [{ "name" => "postgres:15-bookworm", "alias" => "db" }], test_gem["services"]
+    assert_includes test_gem["script"], "bin/rails test"
+    assert_equal ["tmp/junit/*.xml"], Array(test_gem.dig("artifacts", "reports", "junit"))
+    assert_equal ["test_gem"], data.dig("build_gem", "needs")
+    assert_equal "never", data.dig("build_gem", "artifacts", "expire_in")
+
     build = data.fetch("build_gem")
     assert_equal ["/usr/bin/gem-compile.sh"], build["script"]
     assert_equal [{ "if" => "$CI_COMMIT_TAG", "when" => "never" },

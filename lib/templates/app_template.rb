@@ -33,33 +33,37 @@ gem "sassc-rails"
 # a `bundle update --conservative` from an old lock can't stay below it. ADR 0001
 # (thecore repo) only needed model_driven_api >= 3.9.0 / thecore_ui_rails_admin >= 3.8.0
 # (DefaultModuleRegistry); the floors below are higher.
-#   - model_driven_api 3.13.1: the generic API no longer instantiates the class named by
-#     the request path (any JWT could run `Tempfile.new` through `GET /api/v2/tempfiles`).
+#   - model_driven_api 3.13.2: JSON with `include:` works on Rails 8.1 (older ones raise
+#     FrozenError there). Since 3.13.1 the generic API no longer instantiates the class named
+#     by the request path (any JWT could run `Tempfile.new` through `GET /api/v2/tempfiles`).
 #   - thecore_ui_rails_admin 3.8.7: RailsAdmin's User create form answered 500 under
 #     Devise 5, which thecore_auth_commons 3.6.3 requires.
-gem "model_driven_api", "~> 3.13", ">= 3.13.1"
+gem "model_driven_api", "~> 3.13", ">= 3.13.2"
 gem "thecore_ui_rails_admin", "~> 3.8", ">= 3.8.7"
 # Both already arrive as dependencies of the two gems above; listed only for their floors.
-#   - thecore_backend_commons 3.10.0: no job is retried by default and only the latest
+#   - thecore_backend_commons 3.11.0: the first that resolves on Rails 8.1 (rails-i18n 8).
+#     Since 3.10.0 no job is retried by default and only the latest
 #     failed job is kept (sidekiq-failures set capped at 1), so failing jobs can't fill
 #     Redis; THECORE_JOB_RETRIES / THECORE_FAILED_JOBS_KEPT change both per installation.
 #     It also carries 3.9.1's ActionCable JWT verification and 3.9.0's roo 3 (rubyzip
 #     >= 3.4, CVE-2026-85396).
 #   - thecore_auth_commons 3.6.3: OAuth login takes the identity only from OmniAuth's
 #     verified data, never from request params (3.6.2: no fixed initial admin password).
-gem "thecore_backend_commons", "~> 3.10"
+gem "thecore_backend_commons", "~> 3.11"
 gem "thecore_auth_commons", "~> 3.6", ">= 3.6.3"
 # `rails new` already declares rails and puma: their lines are rewritten, since a second
 # `gem` line with a different requirement is a Bundler error.
-#   - rails 7.2.4: carries the 7.2.3.1/7.2.3.2 security fixes.
+#   - rails 8.1.4.1: new apps start on Rails 8.1 (ADR 0033 in mytask-imas, Odoo #6091), the
+#     first release with the 2026-11-04 security fixes. `~> 8.1.4` keeps it below 8.2,
+#     which the 3.x ATOMs don't support.
 #   - puma 7.2.1: fixes the PROXY protocol v1 CVE-2026-47736/47737.
-gsub_file "Gemfile", /^gem ["']rails["'].*$/, 'gem "rails", "~> 7.2", ">= 7.2.4"'
+gsub_file "Gemfile", /^gem ["']rails["'].*$/, 'gem "rails", "~> 8.1.4", ">= 8.1.4.1"'
 gsub_file "Gemfile", /^gem ["']puma["'].*$/, 'gem "puma", ">= 7.2.1"'
 # Pins still needed (checked against rubygems.org on 2026-11-09):
-#   - redis < 6: Action Cable 7.2's Redis adapter (production's cable.yml) requires
-#     `redis >= 4, < 6` when it loads. redis-namespace (via thecore_background_jobs) only
-#     asks for `>= 4`, so a fresh resolve takes redis 6.0.0 and production crashes at boot
-#     with a Gem::LoadError.
+#   - redis < 6: the line the pilot runs. Action Cable 7.2's Redis adapter (production's
+#     cable.yml) refused redis 6 at load; 8.1's accepts `< 7`, but redis 6 is untried with
+#     redis-namespace and Sidekiq 7 (via thecore_background_jobs), which only ask for
+#     `>= 4`. Lift it once the pilot runs on redis 6.
 #   - connection_pool ~> 2.4: connection_pool 3 changed TimedStack#pop and breaks Sidekiq
 #     7's scheduler thread. Sidekiq 7.3.10 caps it below 3 itself, but 7.3.9 and earlier
 #     don't, and Bundler can still pick that pair: a fresh resolve of this gem's own dev
@@ -116,7 +120,7 @@ create_file "vendor/external/.keep", <<~TEXT
 TEXT
 
 # --- No root Dockerfile ------------------------------------------------------
-# `rails new` (7.2) writes a Kamal-style root `Dockerfile` plus the
+# `rails new` writes a Kamal-style root `Dockerfile` plus the
 # `bin/docker-entrypoint` it runs. The Thecore build script (`app-compile.sh` in
 # thecore_devcontainer) prefers a root `Dockerfile` whenever one exists, so keeping
 # Rails' one would make CI build the app with it instead of the Thecore Dockerfile
@@ -126,6 +130,58 @@ TEXT
 # `ADD .` honours it.
 remove_file "Dockerfile"
 remove_file "bin/docker-entrypoint"
+
+# The files below repeat what `thecore:atom` writes into an ATOM's dummy app (atom_generator.rb):
+# this template runs standalone through `rails new -m <URL>` and can't require this gem's code.
+
+# --- Devise's ORM hook, before anything boots the app ------------------------
+# thecore_backend_commons and thecore_auth_commons load `User` while the app boots, and `User`
+# calls `devise`, which only exists once "devise/orm/active_record" is required. Devise's own
+# initializer requires it, but `devise:install` (below) has to boot the app to write it, and so
+# do Rails' own `importmap:install` and any later `bin/rails` command: without this file every
+# one of them fails with "undefined method `devise' for class User". Kept after the install
+# too; requiring the hook a second time from config/initializers/devise.rb is a no-op.
+create_file "config/initializers/00_devise_orm.rb", <<~RUBY, skip: true
+  # Loads Devise's ActiveRecord hook before the Thecore engines load `User` at boot.
+  require "devise/orm/active_record"
+RUBY
+
+# --- The app's Ability, before anything boots the app -------------------------
+# thecore_auth_commons references `Ability` while the app boots, so `cancan:ability` (which
+# boots it to run) could never write it. The pilot's (mytask-imas) Ability, written directly:
+# permissions come from thecore_auth_commons' Role/Permission system, never from rules here.
+create_file "app/models/ability.rb", <<~RUBY, skip: true
+  # frozen_string_literal: true
+
+  # CanCanCan ability class. Permissions in this application are managed through
+  # the Role / Permission / Predicate system provided by thecore_auth_commons,
+  # which populates abilities at runtime via its own hooks. This class is
+  # intentionally left empty — adding rules here would bypass that system.
+  class Ability
+    include CanCan::Ability
+
+    def initialize(user); end
+  end
+RUBY
+
+# --- Action Cable base classes ----------------------------------------------
+# Rails 8 no longer generates app/channels/application_cable (7.2 did), but
+# thecore_backend_commons includes its JWT cable authentication into
+# ApplicationCable::Connection at boot and its channels subclass
+# ApplicationCable::Channel: without them the app raises NameError when it starts.
+# `skip: true` keeps the ones an older `rails new` already wrote.
+create_file "app/channels/application_cable/connection.rb", <<~RUBY, skip: true
+  module ApplicationCable
+    class Connection < ActionCable::Connection::Base
+    end
+  end
+RUBY
+create_file "app/channels/application_cable/channel.rb", <<~RUBY, skip: true
+  module ApplicationCable
+    class Channel < ActionCable::Channel::Base
+    end
+  end
+RUBY
 
 # --- Devcontainer / CI / CLAUDE.md assets, from thecore's own samples -------
 # Single source of truth (ADR 0005) — not duplicated inside this gem. The base
@@ -249,7 +305,24 @@ end
 # have connectivity. Wrapped in `after_bundle` (Rails' own template mechanism
 # for "run this once the gems this template just added are actually bundled")
 # so it runs after — never before — the gems above are installed.
-if options[:asset_pipeline].to_s != "sprockets"
+# Rails 8's `rails new` only generates Propshaft (`--asset-pipeline=sprockets` is gone), but
+# RailsAdmin 3 and the Thecore UI ATOMs run on Sprockets, as the pilot does: swap the gem and
+# write the manifest Sprockets requires at boot (the one `rails new` 7.2 generated). The
+# layout's `stylesheet_link_tag :app` is Propshaft's "every stylesheet" name: Sprockets looks
+# for an app.css that doesn't exist, so every page with the layout raised AssetNotFound.
+if File.read(File.join(destination_root, "Gemfile")).match?(/^gem ["']propshaft["']/)
+  gsub_file "Gemfile", /^gem ["']propshaft["'].*$/, 'gem "sprockets-rails"'
+  layout = "app/views/layouts/application.html.erb"
+  if File.exist?(File.join(destination_root, layout))
+    gsub_file layout, /stylesheet_link_tag :app\b/, 'stylesheet_link_tag "application"'
+  end
+  create_file "app/assets/config/manifest.js", <<~JS, skip: true
+    //= link_tree ../images
+    //= link_directory ../stylesheets .css
+    //= link_tree ../../javascript .js
+    //= link_tree ../../../vendor/javascript .js
+  JS
+elsif options[:asset_pipeline].to_s != "sprockets"
   say_status :warning,
     "this template assumes --asset-pipeline=sprockets (got #{options[:asset_pipeline].inspect}) " \
     "-- rails_admin:install below is still configured for sprockets regardless, see the invocation " \
@@ -308,7 +381,9 @@ after_bundle do
   # limping on into later steps against a broken bundle/app.
   abort("bundle install failed -- aborting the app template's installer chain") unless bundle_command("install")
 
-  generate "devise:install"
+  # `--orm=active_record`: this gem registers itself as the app's generator ORM (`:thecore`,
+  # ADR 0002), and devise:install writes `require "devise/orm/<that ORM>"`, which doesn't exist.
+  generate "devise:install", "--orm=active_record"
 
   # The `_namespace` positional argument ("app") is RailsAdmin::InstallGenerator's own
   # mount-path argument (not a placeholder/app-name) -- passing a non-blank value here
@@ -336,6 +411,6 @@ after_bundle do
   # between them.
   abort("bundle install failed -- aborting the app template's installer chain") unless bundle_command("install")
   rails_command "action_mailbox:install", abort_on_failure: true
-  generate "cancan:ability"
+  # No `cancan:ability`: app/models/ability.rb is written above, before anything boots.
   generate "erd:install"
 end

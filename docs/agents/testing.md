@@ -88,7 +88,7 @@ Key test files:
 - `test/generators/thecore/model_generator_default_concern_behavior_test.rb` — proves,
   integration-level (not just "no file was written"), that a model generated with **no**
   `Api::`/`RailsAdmin::` concern still gets a working default `json_attrs`/`navigation_label`
-  at runtime. This is why `test/dummy` boots real `model_driven_api` (`~> 3.9`) and
+  at runtime. This is why `test/dummy` boots real `model_driven_api` (`~> 3.13, >= 3.13.2`) and
   `thecore_ui_rails_admin` (`~> 3.8`) in the Gemfile — both resolved normally from RubyGems (no
   pin needed; both gems, and their own `thecore_backend_commons` dependency, are published with
   the `DefaultModuleRegistry` code this test exercises). None of this reaches
@@ -99,8 +99,17 @@ Key test files:
   instances directly (`Thecore::Generators::MigrationGenerator.new`/`ModelGenerator.new`) rather
   than using `run_generator`, since it exercises both host classes' independent
   `create_migration_file` overrides in the same file.
-- Pin note: `minitest` is pinned to `~> 5.25` — Rails 7.2's `rails/test_unit/line_filtering.rb`
-  overrides `Minitest::Test.run` with a 2-arg signature that Minitest 6.x's 3-arg arity breaks;
-  an unconstrained `minitest` resolves to 6.x on a fresh `bundle install` (no committed
-  `Gemfile.lock`) and fails every test run before a single test executes. Safe to drop once this
-  gem moves to a Rails version with Minitest 6 support (tracked for release/4).
+- Rails line (Odoo #6091, ADR 0033 in mytask-imas): the Gemfile runs the suite on Rails 8.1
+  (`~> 8.1, >= 8.1.4.1`), the only line CI tests, so `rails new`/`rails plugin new` in the
+  template and ATOM tests generate 8.1 apps and ATOMs. The gemspec accepts `railties >= 7.2, <
+  8.2` (dual support, best effort): `RAILS_VERSION=7.2 bundle update rails && RAILS_VERSION=7.2
+  bundle exec rake test` runs the suite on 7.2.4 locally; a plain `bundle update rails` goes back.
+  The dummy's `model_driven_api` floor is 3.13.2, the first that renders JSON with `include:` on 8.1.
+- Pin note: `minitest` is pinned to `~> 5.25` on both lines — Rails 7.2's
+  `rails/test_unit/line_filtering.rb` overrides `Minitest::Test.run` with a 2-arg signature that
+  Minitest 6.x's 3-arg arity breaks; an unconstrained `minitest` resolves to 6.x on a fresh
+  `bundle install` (no committed `Gemfile.lock`) and fails every 7.2 test run before a single test
+  executes. Same pin as the other ATOMs' suites.
+- Opt-in seams that need more than the offline suite: S1/S2 (`THECORE_REAL_SAMPLES_DIR`, the real
+  `thecore` samples) and S3 (`THECORE_REAL_INSTALL=1`, the App template's real installer chain,
+  `docs/agents/app-template.md`).

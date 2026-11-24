@@ -46,22 +46,54 @@ happened.
 
 **Gemfile floors and pins (thecore_devcontainer#17)**: each floor is the first release carrying a
 fix the pilot (mytask-imas) depends on, so `bundle update --conservative` from an old lock can't
-stay below it: `model_driven_api >= 3.13.1`, `thecore_ui_rails_admin >= 3.8.7`,
-`thecore_backend_commons >= 3.10`, `thecore_auth_commons >= 3.6.3` (the last two are transitive
-and get their own line only for the floor), and `rails >= 7.2.4`/`puma >= 7.2.1`, whose lines
-`rails new` already writes, so they're rewritten with `gsub_file` (a second `gem` line with a
-different requirement is a Bundler error). Two pins stay, each with its reason in the template:
-`redis < 6` (Action Cable 7.2's Redis adapter refuses redis 6 at load, and a fresh resolve takes
-6.0.0) and `connection_pool ~> 2.4` (Sidekiq <= 7.3.9 breaks on connection_pool 3 without capping
+stay below it: `model_driven_api >= 3.13.2` (JSON with `include:` on Rails 8.1),
+`thecore_ui_rails_admin >= 3.8.7`, `thecore_backend_commons ~> 3.11` (the first on Rails 8.1),
+`thecore_auth_commons >= 3.6.3` (the last two are transitive and get their own line only for the
+floor), and `rails ~> 8.1.4, >= 8.1.4.1`/`puma >= 7.2.1`, whose lines `rails new` already writes,
+so they're rewritten with `gsub_file` (a second `gem` line with a different requirement is a
+Bundler error). New apps start on Rails 8.1 (ADR 0033 in mytask-imas, Odoo #6091); `~> 8.1.4`
+keeps them below 8.2, which the 3.x ATOMs don't support. Two pins stay, each with its reason in
+the template: `redis < 6` (the pilot's line: Action Cable 8.1 accepts `< 7`, but redis 6 is
+untried with redis-namespace and Sidekiq 7) and `connection_pool ~> 2.4` (Sidekiq <= 7.3.9 breaks on connection_pool 3 without capping
 it; drop the pin once `thecore_background_jobs` moves to Sidekiq 8). **Only raise a floor to a
 version published on RubyGems**: S1 runs a real `bundle lock`. `thecore_backend_commons`' floor is
-3.10.0 (thecore_devcontainer#23): no job retries by default, failures set capped at 1,
-`THECORE_JOB_RETRIES`/`THECORE_FAILED_JOBS_KEPT` (thecore_devcontainer#16, #22).
+3.11.0 (Odoo #6089: `rails-i18n` 8, so it resolves on Rails 8.1); 3.10.0 brought no job retries
+by default, failures set capped at 1, `THECORE_JOB_RETRIES`/`THECORE_FAILED_JOBS_KEPT`
+(thecore_devcontainer#16, #22, #23).
 The "optional" commented block lists only gems not already in the bundle; `thecore_settings`,
 `thecore_background_jobs` and `thecore_ui_commons` are named as dependencies instead. S1 asserts
 the floors on the Gemfile's requirements and on the resolved lock (`assert_gem_floor_practices`).
 
-**No root `Dockerfile` (thecore_devcontainer#7)**: `rails new` 7.2 writes a Kamal-style root
+**What the Thecore engines need before anything boots the app (Odoo #6091)**: written at
+template time, before Rails' own `after_bundle` steps (`importmap:install` already boots the app)
+and whether or not the installer chain runs. `config/initializers/00_devise_orm.rb` requires
+`devise/orm/active_record`: `thecore_backend_commons`/`thecore_auth_commons` load `User` at boot
+and `User` calls `devise`, so without it `devise:install` itself (which boots the app to write
+Devise's initializer) failed with `undefined method devise for User`; requiring it again from
+`devise.rb` is a no-op. `app/models/ability.rb` is the pilot's empty `Ability` (permissions come
+from thecore_auth_commons' Role/Permission system), since `thecore_auth_commons` references
+`Ability` at boot and `cancan:ability` would have to boot the app to write it (`cancan:ability`
+is no longer in the chain). `app/channels/application_cable/{connection,channel}.rb`: Rails 8 no
+longer generates them and `thecore_backend_commons` extends both at boot. All three use `skip:
+true`. `devise:install` gets `--orm=active_record`, since this gem registers itself as the app's
+generator ORM (`:thecore`) and Devise would otherwise write `require "devise/orm/thecore"`. These
+were found by running the installer chain for real (S3 below): with the Thecore ATOMs of 2026 it
+failed on Rails 7.2.4 too, the offline tests never ran it.
+
+**Sprockets on Rails 8 (Odoo #6091)**: Rails 8's `rails new` only generates Propshaft
+(`--asset-pipeline=sprockets` no longer exists), but RailsAdmin 3 and the Thecore UI ATOMs run on
+Sprockets, as the pilot does. When the Gemfile has `propshaft`, the template replaces it with
+`sprockets-rails`, writes `app/assets/config/manifest.js` (the one `rails new` 7.2 wrote) and
+turns the layout's `stylesheet_link_tag :app` (Propshaft's "every stylesheet" name; Sprockets
+raised AssetNotFound on every page with the layout) into `"application"`; a
+7.2 `rails new` without `--asset-pipeline=sprockets` still gets the warning.
+
+**Rails 8's other defaults are left as `rails new` writes them** (Solid Cache/Queue/Cable with
+their production databases, Kamal, Thruster): dev and test work with them, but the pilot's
+production shape (Sidekiq and Redis, one database, the Thecore Dockerfile) differs. The update
+path that adopts them in the Thecore stack (Solid Queue/Cable/Cache in place of Sidekiq and Redis, ADR 0035 in mytask-imas) is #27.
+
+**No root `Dockerfile` (thecore_devcontainer#7)**: `rails new` writes a Kamal-style root
 `Dockerfile` and the `bin/docker-entrypoint` it runs. The Thecore build script
 (`scripts/app-compile.sh` in `thecore_devcontainer`) builds with a root `Dockerfile` whenever one
 exists, and only falls back to the Thecore one (`/etc/thecore/docker/Dockerfile`) otherwise — so
@@ -264,3 +296,18 @@ docker run --rm ... -e THECORE_REAL_SAMPLES_DIR=/thecore/samples \
 
 Inside the devcontainer, `THECORE_REAL_SAMPLES_DIR=<thecore checkout>/samples bundle exec rake test`.
 To test a `thecore` samples change, point it at the checkout that carries the change.
+
+**The real installer chain (seam S3, Odoo #6091)** —
+`test_app_with_installers_migrates_passes_its_tests_and_eager_loads` runs the template as "Create
+App" does (`THECORE_APP_TEMPLATE_NON_INTERACTIVE=1`, `THECORE_APP_TEMPLATE_RUN_INSTALLERS=true`,
+fixture samples): a real `bundle install` and every installer, then the app runs `db:create
+db:migrate`, its own `bin/rails test` and `Rails.application.eager_load!`, all with
+`RAILS_ENV=test` and no `DATABASE_URL` (in the devcontainer it names the host app's development
+database), and drops its test database at the end. It also checks `devise.rb` requires the
+ActiveRecord ORM hook. Before it existed this path was manual-only, which is how the installer
+chain stayed broken. It skips unless `THECORE_REAL_INSTALL=1`, because it needs the network, a
+PostgreSQL server (`PG*` variables) and this gem's Rails installed globally: it runs `rails
+_<Rails.version>_ new` outside this gem's bundle, so the app's own `bundle install` resolves its
+own Gemfile, `thecore_generators` included (before a release, `gem build` + `gem install --local`
+the new version first). Inside the devcontainer:
+`THECORE_REAL_INSTALL=1 bundle exec ruby -Itest test/templates/app_template_test.rb -n /installers/`.

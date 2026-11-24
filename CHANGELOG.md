@@ -1,3 +1,34 @@
+## 3.15.0
+
+- **Rails 8.1** (Odoo #6091 in mytask-imas, ADR 0033 there): the gem accepts `railties >= 7.2,
+  < 8.2` (was `~> 7.2`), so apps on Rails 8.1 can bundle it; its own suite and CI run on Rails
+  8.1 (`RAILS_VERSION=7.2` runs them on 7.2.4 locally, best effort).
+- App template: new apps start on Rails 8.1, `rails ~> 8.1.4, >= 8.1.4.1` (never 8.2), with
+  floors `model_driven_api >= 3.13.2` (JSON with `include:` on 8.1) and `thecore_backend_commons
+  ~> 3.11` (resolves on 8.1). Rails 8's `rails new` only does Propshaft: the template switches the
+  app to Sprockets (`sprockets-rails` and `app/assets/config/manifest.js`), as RailsAdmin 3 and
+  the pilot need, and writes `app/channels/application_cable/{connection,channel}.rb`, which
+  Rails 8 no longer generates and `thecore_backend_commons` extends at boot; the layout's
+  `stylesheet_link_tag :app` (Propshaft's name) becomes `"application"`, which Sprockets resolves. `redis < 6` stays as
+  the pilot's line, with its reason updated. Rails 8's Solid Cache/Queue/Cable, Kamal and
+  Thruster are left as `rails new` writes them; the update path that adopts them is #27.
+- App template: the installer chain (`THECORE_APP_TEMPLATE_RUN_INSTALLERS=true` or a "yes") works
+  again; with the current Thecore ATOMs it failed on Rails 7.2 too. The template writes
+  `config/initializers/00_devise_orm.rb` (Devise's ActiveRecord hook, since the engines load
+  `User` at boot) and the pilot's empty `app/models/ability.rb` before anything boots the app,
+  `cancan:ability` is gone from the chain, and `devise:install` gets `--orm=active_record` (this
+  gem is the app's generator ORM, so Devise wrote `require "devise/orm/thecore"`). New opt-in test
+  S3 (`THECORE_REAL_INSTALL=1`) runs the chain for real: the app migrates, passes its own tests
+  and eager-loads.
+- `thecore:atom`: the generated gemspec requires `rails >= 7.2, < 8.2` (was `~> 7.2`) and
+  `model_driven_api ~> 3.13, >= 3.13.2` (was `~> 3.9`; older ones fail on Rails 8.1); the dummy
+  app gets `ApplicationCable::Connection`/`Channel` on Rails 8. The generated CI publishes only
+  after a green test suite (#26), like the base ATOMs: `gempush.yml` ("Test and publish") has a
+  `test` job on PostgreSQL 15 and a `publish` job with `needs: test` that pushes the gem, then
+  tags it and attaches the JUnit report to the GitHub release; `.gitlab-ci.yml` has `test_gem`,
+  and `build_gem` needs it and keeps the JUnit report. The ATOM gets
+  `test/support/junit_report.rb` (required by its test helper) and `minitest-reporters`.
+
 ## 3.14.0
 
 - The App template also fetches `.devcontainer/docker-socket-gid.sh` (made executable) and

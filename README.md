@@ -253,7 +253,8 @@ with `--non-interactive`) for the same five fields `createATOM.js` always has, t
   (below).
 - Asks (`yes?`-style, default yes; `--skip-api-admin-deps` in non-interactive mode) whether to
   add `model_driven_api`/`thecore_ui_rails_admin` as dependencies — at this gem's own ADR 0001
-  floor (`~> 3.9`/`~> 3.8`), not `createATOM.js`'s stale `~> 3.1`/`~> 3.2`. Declining adds
+  floor (`~> 3.8` for `thecore_ui_rails_admin`) and at `model_driven_api ~> 3.13, >= 3.13.2`
+  (older ones fail on Rails 8.1), not `createATOM.js`'s stale `~> 3.1`/`~> 3.2`. Declining adds
   neither; the Scaffold Files/directories below are created either way.
 - Creates the same Scaffold Files/directories `createATOM.js` always has: `db/migrate`, the
   API/RailsAdmin concern directories, `config/initializers`, `config/locales`,
@@ -263,12 +264,14 @@ with `--non-interactive`) for the same five fields `createATOM.js` always has, t
   content `createATOM.js` already produces.
 - Generates **both** `.github/workflows/gempush.yml` and `.gitlab-ci.yml` unconditionally — no
   hosting-profile prompt (see ADR 0006 for why: which git host a developer pushes to is a
-  per-developer choice this ecosystem already treats as generic). `gempush.yml`'s two
-  long-standing bugs are fixed here (a broken `awk` pipeline computing the version string; a
-  `version_exists` check referenced in `if:` conditions but never actually set, so the
-  tag/publish steps have never run for any ATOM generated this way). Both publish like the real
-  ATOMs (thecore_devcontainer#14): `gempush.yml` only on pushes to `release/3`; `.gitlab-ci.yml`'s
-  `build_gem` only when `lib/*/version.rb` changes, plus GitLab's SAST and Secret Detection
+  per-developer choice this ecosystem already treats as generic). Both publish like the real
+  ATOMs (thecore_devcontainer#14), and only after a green test suite (#26): `gempush.yml` runs a
+  `test` job on PostgreSQL 15 on every push and pull request on `release/3` and a `publish` job
+  (`needs: test`, pushes only) that pushes the gem, tags the version and attaches the JUnit report
+  to its GitHub release; `.gitlab-ci.yml` runs `test_gem` on PostgreSQL 15 on every branch push,
+  and `build_gem` (`needs: [test_gem]`) only when `lib/*/version.rb` changes, keeping the JUnit
+  report. `test/support/junit_report.rb` (minitest-reporters, on when `JUNIT_REPORT_DIR` is set)
+  writes that report. Plus GitLab's SAST and Secret Detection
   templates and a `security-summary` job running `script/security_summary.rb`, which is fetched
   from `thecore`'s samples with its test (`test/script/security_summary_test.rb`).
 - `--gem-host=HOST` (default `rubygems.org`) names the gem server: the gemspec's
@@ -276,8 +279,10 @@ with `--non-interactive`) for the same five fields `createATOM.js` always has, t
   pushes there (`GITLAB_GEM_REPO_TARGET`), and so does `gempush.yml` (`gem push --host
   https://HOST`, with the API key in the GitHub repository secret `GEMS_REPO_CREDENTIALS`). With
   the default the variable is left out, so the image's `gem-compile.sh` pushes to RubyGems, and
-  `gempush.yml` pushes to RubyGems with the `RUBYGEMS_AUTH_TOKEN` secret. The gemspec requires `rails ~> 7.2`, the Rails of
-  Thecore 3 hosts.
+  `gempush.yml` pushes to RubyGems with the `RUBYGEMS_AUTH_TOKEN` secret. The gemspec requires
+  `rails >= 7.2, < 8.2`: Thecore 3 hosts run Rails 7.2 or 8.1 (dual support). On Rails 8 the dummy
+  app also gets `ApplicationCable::Connection`/`Channel`, which `rails plugin new` no longer
+  writes and `thecore_backend_commons` extends at boot.
 - Rewrites the gemspec's authors/email/homepage/summary/description/metadata fields via targeted
   in-memory substitutions (not `createATOM.js`'s own blind full-file line rewrite, which —
   verified directly against a current `rails plugin new --full` gemspec — silently drops the
@@ -380,9 +385,17 @@ template rather than a `thecore:*` generator — its entry point is `rails new -
 generate`:
 
 ```bash
-rails new myapp --database=postgresql --asset-pipeline=sprockets \
+rails _8.1.4.1_ new myapp --database=postgresql \
   -m https://raw.githubusercontent.com/gabrieletassoni/thecore_generators/release/3/lib/templates/app_template.rb
 ```
+
+New apps start on Rails 8.1. Rails 8's `rails new` only generates Propshaft (there is no
+`--asset-pipeline=sprockets` any more); the template switches the app to Sprockets, which
+RailsAdmin 3 and the Thecore UI need, writes `app/assets/config/manifest.js` and links
+`"application"` in the layout (Propshaft's `:app` doesn't exist in Sprockets). With Rails 7.2's
+`rails new`, keep passing `--asset-pipeline=sprockets`. Rails 8's other defaults (Solid
+Cache/Queue/Cable, Kamal, Thruster) are left as `rails new` writes them; the pilot's production
+shape is Sidekiq + Redis and one database; the update path that adopts them is #27.
 
 Run inside a devcontainer already created by the "Setup Devcontainer" VS Code command — a
 bootstrap step this template doesn't invoke or modify itself (that command's own code is
@@ -392,14 +405,19 @@ files that bootstrap step created, by design. See
 for the full design and why the two stay separate).
 
 - **Core Gemfile stack, active** — `devise`, `cancancan`, `rails_admin`, `sassc-rails`,
-  `model_driven_api` (`>= 3.13.1`), `thecore_ui_rails_admin` (`>= 3.8.7`), `rails-erd`
+  `model_driven_api` (`>= 3.13.2`), `thecore_ui_rails_admin` (`>= 3.8.7`), `rails-erd`
   (`:development`). `thecore_generators` itself is added too, `group: :development` — so the
   generated app can immediately use every generator/task documented above without a manual
   Gemfile edit first.
-- **Security floors and pins** — `thecore_backend_commons >= 3.10` and `thecore_auth_commons >=
-  3.6.3` (transitive, listed for their floor), `rails >= 7.2.4`, `puma >= 7.2.1`, and the pins
-  `redis < 6` (Action Cable 7.2) and `connection_pool ~> 2.4` (Sidekiq 7). Each carries its reason
-  in a Gemfile comment.
+- **Security floors and pins** — `thecore_backend_commons ~> 3.11` and `thecore_auth_commons >=
+  3.6.3` (transitive, listed for their floor), `rails ~> 8.1.4, >= 8.1.4.1` (never 8.2, which the
+  3.x ATOMs don't support), `puma >= 7.2.1`, and the pins `redis < 6` (the pilot's line) and
+  `connection_pool ~> 2.4` (Sidekiq 7). Each carries its reason in a Gemfile comment.
+- **What the Thecore engines need before the app can boot** — `config/initializers/00_devise_orm.rb`
+  (Devise's ActiveRecord hook: the engines load `User` at boot), the pilot's empty
+  `app/models/ability.rb` (permissions come from thecore_auth_commons) and
+  `app/channels/application_cable/{connection,channel}.rb` (Rails 8 no longer generates them),
+  written whether or not the installer chain runs.
 - **The rest of the generic Thecore ecosystem, commented out** — `thecore_print_commons`,
   `thecore_tcp_debug`, `thecore_download_documents`, `thecore_dataentry_commons`, each with a
   one-line purpose comment — discoverable but off by default, the same "commented but documented"
@@ -428,11 +446,12 @@ for the full design and why the two stay separate).
 - **Test-database rule** — the generated `test/test_helper.rb` replaces whatever database
   `DATABASE_URL` names with `<app>_test` before the app boots. The devcontainer's `DATABASE_URL`
   points at development, so running tests never touches development data.
-- **No root `Dockerfile`** — the `Dockerfile` and `bin/docker-entrypoint` that `rails new` 7.2
+- **No root `Dockerfile`** — the `Dockerfile` and `bin/docker-entrypoint` that `rails new`
   generates are removed, so the Thecore build script (`app-compile.sh` in `thecore_devcontainer`)
   builds the app with the Thecore Dockerfile instead of Rails' own. `.dockerignore` is kept.
 - **The standard installer chain** (`devise:install`, `rails_admin:install`, `active_storage:
-  install`, `action_text:install`, `action_mailbox:install`, `cancan:ability`, `erd:install`,
+  install`, `action_text:install`, `action_mailbox:install`, `erd:install`; `devise:install`
+  with `--orm=active_record`, since this gem is the app's generator ORM;
   each preceded by the necessary `bundle install`) is genuinely optional, gated behind an
   interactive prompt (`yes?`, wrapped in `after_bundle` so it only ever runs once the gems
   above are actually bundled) — a developer bootstrapping without network access can decline
@@ -443,7 +462,7 @@ for the full design and why the two stay separate).
   or unrecognized, rather than guessing. Example:
   ```bash
   THECORE_APP_TEMPLATE_NON_INTERACTIVE=1 THECORE_APP_TEMPLATE_RUN_INSTALLERS=true \
-    rails new myapp --database=postgresql --asset-pipeline=sprockets \
+    rails _8.1.4.1_ new myapp --database=postgresql \
     -m https://raw.githubusercontent.com/gabrieletassoni/thecore_generators/release/3/lib/templates/app_template.rb
   ```
 
