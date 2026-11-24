@@ -1,0 +1,4 @@
+# Minimal fixture standing in for thecore's real samples/devcontainer/ldap-users.ldif.
+dn: ou=people,dc=example,dc=com
+objectClass: organizationalUnit
+ou: people

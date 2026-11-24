@@ -134,7 +134,7 @@ class AppTemplateTest < Minitest::Test
       %w[
         devcontainer.json docker-compose.yml Dockerfile create-db-user.sql
         link-host-home.sh check-plugins.sh heal-stale-containers.sh github-accounts.sh
-        docker-socket-gid.sh .gitignore
+        docker-socket-gid.sh .gitignore ldap-users.ldif
       ].each do |file|
         destination = File.join(app_path, ".devcontainer", file)
         assert File.file?(destination), "expected .devcontainer/#{file} to be fetched from thecore's samples"
@@ -160,6 +160,7 @@ class AppTemplateTest < Minitest::Test
       %w[
         .gitlab-ci.yml .github/workflows/ci.yml .github/workflows/security.yml CLAUDE.md AGENTS.md
         script/security_summary.rb test/script/security_summary_test.rb
+        test/application_system_test_case.rb test/system/sign_in_test.rb
         docs/agents/issue-tracker.md docs/agents/triage-labels.md docs/agents/domain.md
       ].each do |file|
         destination = File.join(app_path, file)
@@ -191,6 +192,7 @@ class AppTemplateTest < Minitest::Test
       assert status.success?, "`rails new -m app_template.rb` on #{samples_dir} failed:\n#{stdout}\n#{stderr}"
 
       assert_devcontainer_practices(app_path)
+      assert_system_test_practices(app_path)
       assert_test_database_practices(app_path)
       assert_ci_test_database_practices(app_path)
       assert_agent_docs_practices(app_path)
@@ -467,6 +469,26 @@ class AppTemplateTest < Minitest::Test
       "expected the app service to group_add the host's docker.sock gid"
     gitignore = File.read(File.join(app_path, ".devcontainer", ".gitignore")).lines.map(&:strip)
     assert_includes gitignore, "/.env", "expected .devcontainer/.gitignore to keep the per-host .env out of git"
+  end
+
+  # On-demand system tests (ADR 0010 in thecore): the devcontainer runs a `selenium` browser the
+  # app container reaches through SELENIUM_URL, and an `ldap` test server loaded from the LDIF it
+  # mounts; the app's system test case drives that remote browser.
+  def assert_system_test_practices(app_path)
+    compose = YAML.safe_load(File.read(File.join(app_path, ".devcontainer", "docker-compose.yml")), aliases: true)
+    services = compose.fetch("services")
+    assert_match %r{\Aselenium/standalone-chromium:\d}, services.dig("selenium", "image").to_s,
+      "expected a pinned selenium/standalone-chromium service"
+    assert_equal "http://selenium:4444", services.dig("app", "environment", "SELENIUM_URL"),
+      "expected the app service to point SELENIUM_URL at the selenium service"
+    assert_match %r{\Aosixia/openldap:\d}, services.dig("ldap", "image").to_s, "expected a pinned osixia/openldap service"
+    ldif = services.dig("ldap", "volumes").to_a.map { |v| v.split(":").first }
+    assert_includes ldif, "./ldap-users.ldif", "expected the ldap service to load .devcontainer/ldap-users.ldif"
+    assert File.file?(File.join(app_path, ".devcontainer", "ldap-users.ldif")), "expected .devcontainer/ldap-users.ldif"
+
+    system_test_case = File.read(File.join(app_path, "test", "application_system_test_case.rb"))
+    assert_includes system_test_case, %(ENV["SELENIUM_URL"]), "expected the system test case to use SELENIUM_URL"
+    assert Dir[File.join(app_path, "test", "system", "*_test.rb")].any?, "expected at least one system test"
   end
 
   # Top-level keys GitHub Actions accepts in a workflow file; any other key (such as a

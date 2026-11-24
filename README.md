@@ -438,7 +438,9 @@ for the full design and why the two stay separate).
   own dual-CI generation, extended here by ADR 0007/thecore_generators#25), the security
   scanning next to them (`.github/workflows/security.yml`, and on GitLab SAST, Secret Detection,
   brakeman, bundler-audit and a `security-summary` job running `script/security_summary.rb`,
-  fetched with its test `test/script/security_summary_test.rb`), and `CLAUDE.md`
+  fetched with its test `test/script/security_summary_test.rb`), the on-demand system tests
+  (`test/application_system_test_case.rb` and the smoke test `test/system/sign_in_test.rb`,
+  against the devcontainer's `selenium` and `ldap` services; ADR 0010 in `thecore`), and `CLAUDE.md`
   (universal sections only, project-specific sections left as TODO placeholders), plus
   `AGENTS.md` (points to `CLAUDE.md`) and `docs/agents/` (issue tracker picked from the git
   remote's host, GitHub or GitLab Issues; triage labels; domain docs). The fetch

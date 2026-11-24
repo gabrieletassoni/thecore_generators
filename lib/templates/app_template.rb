@@ -237,7 +237,7 @@ RUBY
 # Every write below is unconditional (`force: true`, no interactive prompt).
 # Inside the documented flow, the separate, prior "Setup Devcontainer" step
 # (`thecore_code_extension/commands/setupDevContainer.js`) has already written the
-# eight `.devcontainer/*` files (ten from the extension release after 3.11.0);
+# eight `.devcontainer/*` files (ten from the extension release after 3.11.0, eleven after 3.12.0);
 # replacing them with the samples is the point, not a
 # conflict to ask about. With a bare `rails new -m` (or an older extension release)
 # some or all of them are new files instead, and `force: true` is harmless there.
@@ -269,8 +269,10 @@ end
 # docker.sock gid to `.devcontainer/.env` for docker-compose.yml's `group_add`;
 # `.gitignore` keeps that per-host `.env` out of git, since Rails' own
 # `.gitignore` only covers `/.env*` at the root (ADR 0006 in thecore_devcontainer).
+# `ldap-users.ldif` is the test user of the compose file's `ldap` service, which the
+# system tests below sign in with (thecore_generators#28, ADR 0010 in thecore).
 %w[devcontainer.json docker-compose.yml Dockerfile create-db-user.sql link-host-home.sh check-plugins.sh
-   heal-stale-containers.sh github-accounts.sh docker-socket-gid.sh .gitignore].each do |file|
+   heal-stale-containers.sh github-accounts.sh docker-socket-gid.sh .gitignore ldap-users.ldif].each do |file|
   fetch_thecore_sample("devcontainer/#{file}", ".devcontainer/#{file}")
 end
 # `get`/`create_file` only write content, never permissions — the executable bit
@@ -295,6 +297,12 @@ fetch_thecore_sample(".github/workflows/ci.yml", ".github/workflows/ci.yml")
 fetch_thecore_sample(".github/workflows/security.yml", ".github/workflows/security.yml")
 fetch_thecore_sample("script/security_summary.rb", "script/security_summary.rb")
 fetch_thecore_sample("test/script/security_summary_test.rb", "test/script/security_summary_test.rb")
+# thecore_generators#28 (ADR 0010 in thecore): on-demand system tests against the devcontainer's
+# `selenium` browser (SELENIUM_URL) and `ldap` service, with a smoke test. Rails 8.1 writes no
+# application_system_test_case.rb without `--devcontainer`, so this is a create, not an overwrite;
+# CI runs `bin/rails test`, which skips test/system.
+fetch_thecore_sample("test/application_system_test_case.rb", "test/application_system_test_case.rb")
+fetch_thecore_sample("test/system/sign_in_test.rb", "test/system/sign_in_test.rb")
 fetch_thecore_sample("CLAUDE.md", "CLAUDE.md")
 # thecore_devcontainer#13: the agent docs CLAUDE.md points to (issue tracker picked from the git
 # remote's host, triage labels, domain docs) and an AGENTS.md that only points to CLAUDE.md, so

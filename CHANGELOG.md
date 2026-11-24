@@ -1,3 +1,13 @@
+## 3.17.0
+
+- App template: on-demand system tests (#28, ADR 0010 in `thecore`). It fetches
+  `test/application_system_test_case.rb` and the smoke test `test/system/sign_in_test.rb` from
+  `thecore`'s samples (an admin signs in through the Devise form, and an LDAP-only user signs in
+  against the devcontainer's `ldap` service), plus `.devcontainer/ldap-users.ldif`, that service's
+  test user. The samples' devcontainer runs a `selenium` browser (`SELENIUM_URL` on the app) and
+  the `ldap` service; `bin/rails test:system` runs the tests, CI's `bin/rails test` skips them.
+  Checked end to end on a generated app (real bundle, installers, both tests green).
+
 ## 3.16.0
 
 - App template: new apps run on the Thecore 3 runtime, not Rails 8's defaults (#27, stage 1):

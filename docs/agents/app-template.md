@@ -216,9 +216,14 @@ what tells Bundler which bundle's `rails` to resolve.
 **Devcontainer/CI/CLAUDE.md assets are fetched from `thecore`'s own `samples/`, not shipped here**
 (thecore_generators#18, extended by #25): `.devcontainer/*` (`devcontainer.json`,
 `docker-compose.yml`, `Dockerfile`, `create-db-user.sql`, `link-host-home.sh`,
-`check-plugins.sh`, `heal-stale-containers.sh`, `github-accounts.sh`, `docker-socket-gid.sh` and
-`.gitignore` — the last two give `vscode` the host's `docker.sock` group via compose's `group_add`
-and keep the per-host `.devcontainer/.env` out of git, ADR 0006 in `thecore_devcontainer`), **both** `.gitlab-ci.yml` and `.github/workflows/ci.yml` (ADR 0007 —
+`check-plugins.sh`, `heal-stale-containers.sh`, `github-accounts.sh`, `docker-socket-gid.sh`,
+`.gitignore` — those two give `vscode` the host's `docker.sock` group via compose's `group_add`
+and keep the per-host `.devcontainer/.env` out of git, ADR 0006 in `thecore_devcontainer` — and
+`ldap-users.ldif`, the test user of compose's `ldap` service), `test/application_system_test_case.rb`
+and the smoke test `test/system/sign_in_test.rb` (#28, ADR 0010 in `thecore`: on-demand system
+tests against the devcontainer's `selenium` browser through `SELENIUM_URL` and its `ldap` service;
+Rails 8.1 writes no system test case without `--devcontainer`, and CI's `bin/rails test` skips
+`test/system`), **both** `.gitlab-ci.yml` and `.github/workflows/ci.yml` (ADR 0007 —
 same git-hosting-agnostic reasoning ADR 0006 already established for `thecore:atom`'s own dual-CI
 generation, no hosting-profile prompt), `CLAUDE.md`, `AGENTS.md` and `docs/agents/`
 (`issue-tracker.md`, `triage-labels.md`, `domain.md`; thecore_devcontainer#13) are all fetched via a
@@ -250,7 +255,7 @@ samples change is pushed before the template change that fetches it (spec thecor
 
 Every fetch passes `force: true` — unconditional overwrite, no interactive Thor conflict prompt.
 In the documented flow the separate, prior "Setup Devcontainer" VS Code command
-(`setupDevContainer.js`) has already written all eight `.devcontainer/*` files (ten from the release after 3.11.0; the extension's
+(`setupDevContainer.js`) has already written all eight `.devcontainer/*` files (ten from the release after 3.11.0, eleven from the one after 3.12.0; the extension's
 templates carry the same content as the samples, thecore_devcontainer#11) — replacing them is the
 point, not a conflict to ask about. With a bare `rails new -m`, or an older extension release, some
 or all of them are new files instead, and `force: true` is harmless there. `.gitlab-ci.yml`,
