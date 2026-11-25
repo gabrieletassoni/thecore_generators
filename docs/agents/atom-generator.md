@@ -91,7 +91,10 @@ ATOMs' own workflow, e.g. `thecore_backend_commons`) runs on pushes and pull req
 failure) and a `publish` job with `needs: test`, only on a push. `publish` skips a version whose
 tag exists (`version_exists`), pushes the gem first and tags it after (a failed push leaves no tag,
 so re-running retries it), then creates the version's GitHub release with the JUnit report
-attached. `create_junit_report` writes `test/support/junit_report.rb` (minitest-reporters, active
+attached. A rerun after a failed tag push does not push again: the publish step
+skips a version the gem host already has (RubyGems: `api/v2/rubygems/<gem>/versions/<version>.json`
+answers 200; a `--gem-host`: `gem spec --remote` authenticated with the same key, which falls back to
+pushing if the key can't read), and the tag and the release follow (host Odoo #6259). `create_junit_report` writes `test/support/junit_report.rb` (minitest-reporters, active
 only when `JUNIT_REPORT_DIR` is set) and requires it from `test/test_helper.rb` right after
 `rails/test_help`; the end-to-end tests run the ATOM's suite a second time with
 `JUNIT_REPORT_DIR` and check the XML. `.gitlab-ci.yml` (`create_ci_files`, built by the private

@@ -106,6 +106,9 @@ module Thecore
       # push publishes only after it is green (`needs: test`). The publish job pushes the gem
       # first and tags it after, so a failed push leaves no tag and re-running the workflow
       # retries it; `version_exists` (from the version's tag) skips a version already published.
+      # A push that worked before a failed tag push is not repeated on the rerun (the gem
+      # host refuses the same version twice): the publish step skips a version the host already
+      # has, and the tag and the release follow (Odoo #6259 in mytask-imas).
       # The JUnit report of the green run is attached to the version's GitHub release, the
       # published version's test evidence. The publish step itself (#gempush_yml) depends on
       # --gem-host. Started from createATOM.js's addCICDFiles, whose two bugs (an unmatched `)`
@@ -222,6 +225,16 @@ module Thecore
                 env:
                   GEM_HOST_API_KEY: ${{secrets.RUBYGEMS_AUTH_TOKEN}}
                 run: |
+                  # A rerun after a failed tag push: RubyGems refuses the same version
+                  # twice, so a version it already has is not pushed again and the tag and the
+                  # release follow.
+                  gem_name=$(basename *.gemspec .gemspec)
+                  published=$(curl -sS --retry 3 -o /dev/null -w '%{http_code}' \\
+                    "https://rubygems.org/api/v2/rubygems/$gem_name/versions/$version.json") || true
+                  if [ "$published" = "200" ]; then
+                    echo "$gem_name $version is already on RubyGems: not pushing it again"
+                    exit 0
+                  fi
                   mkdir -p $HOME/.gem
                   touch $HOME/.gem/credentials
                   chmod 0600 $HOME/.gem/credentials
@@ -241,6 +254,15 @@ module Thecore
                 env:
                   GEM_HOST_API_KEY: ${{secrets.GEMS_REPO_CREDENTIALS}}
                 run: |
+                  # A rerun after a failed tag push: a version the host already has is not
+                  # pushed again, and the tag and the release follow. The host wants the key for
+                  # reading too; if the key can't read, the lookup fails and the push runs.
+                  gem_name=$(basename *.gemspec .gemspec)
+                  if gem spec --remote "$gem_name" -v "$version" --clear-sources \\
+                      --source "https://${GEM_HOST_API_KEY}@%<host>s/" >/dev/null 2>&1; then
+                    echo "$gem_name $version is already on %<host>s: not pushing it again"
+                    exit 0
+                  fi
                   gem build *.gemspec
                   gem push --host %<url>s *.gem
       YAML

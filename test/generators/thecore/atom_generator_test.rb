@@ -201,6 +201,15 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     publish = gempush_publish_step(atom)
     assert_match(/^gem push \*\.gem$/, publish["run"])
     assert_equal "${{secrets.RUBYGEMS_AUTH_TOKEN}}", publish.dig("env", "GEM_HOST_API_KEY")
+    # A rerun after a failed tag push (host Odoo #6259): the version already on RubyGems is
+    # not pushed again (RubyGems refuses it), so the tag and the release that follow still run.
+    ok, calls = run_publish_step(atom, published: true)
+    assert ok, "expected the publish step to succeed on a version already on RubyGems"
+    assert(calls.any? { |c| c.start_with?("curl ") && c.include?("https://rubygems.org/api/v2/rubygems/tcp_debugger/versions/1.0.0.json") })
+    refute(calls.any? { |c| c.start_with?("gem push") }, "expected no gem push for a version already published")
+    ok, calls = run_publish_step(atom, published: false)
+    assert ok
+    assert_includes calls, "gem push *.gem"
     assert_file "#{atom}/.gitlab-ci.yml" do |content|
       data = YAML.safe_load(content)
       assert_equal "dev@alchemic.it", data["variables"]["GITLAB_EMAIL"]
@@ -276,6 +285,15 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
     assert_match(%r{^gem push --host https://gems\.example\.com \*\.gem$}, publish["run"])
     assert_equal "${{secrets.GEMS_REPO_CREDENTIALS}}", publish.dig("env", "GEM_HOST_API_KEY")
     refute_match(/rubygems/i, publish.to_s)
+    # Resumable like the RubyGems one (host Odoo #6259): a version the host already has is not pushed
+    # again. The lookup authenticates with the same key, as the private host wants for reading too.
+    ok, calls = run_publish_step(atom, published: true)
+    assert ok, "expected the publish step to succeed on a version already on the host"
+    assert(calls.any? { |c| c.start_with?("gem spec --remote tcp_debugger -v 1.0.0") && c.include?("--source https://the-key@gems.example.com/") })
+    refute(calls.any? { |c| c.start_with?("gem push") }, "expected no gem push for a version already published")
+    ok, calls = run_publish_step(atom, published: false)
+    assert ok
+    assert_includes calls, "gem push --host https://gems.example.com *.gem"
 
     # Scaffold Files/directories are still created regardless of this choice.
     assert_file "#{atom}/config/initializers/after_initialize.rb"
@@ -388,6 +406,30 @@ class Thecore::Generators::AtomGeneratorTest < Rails::Generators::TestCase
   def gempush_publish_step(atom)
     gempush = YAML.safe_load(File.read(File.join(destination_root, atom, ".github/workflows/gempush.yml")))
     gempush.dig("jobs", "publish", "steps").find { |step| step["run"].to_s.include?("gem push") }
+  end
+
+  # Runs the generated publish step's script as GitHub does (bash -e -o pipefail) for version 1.0.0,
+  # with stub `curl` and `gem` that answer as if the version were already on the gem host or not.
+  # Returns whether the script succeeded and the curl/gem command lines it ran.
+  def run_publish_step(atom, published:)
+    script = gempush_publish_step(atom)["run"]
+    Dir.mktmpdir do |dir|
+      bin = File.join(dir, "bin")
+      calls = File.join(dir, "calls")
+      FileUtils.mkdir_p(bin)
+      File.write(File.join(dir, "#{File.basename(atom)}.gemspec"), "")
+      write_stub(bin, "curl", %(echo "curl $*" >> #{calls.dump}\nprintf '%s' #{published ? 200 : 404}))
+      write_stub(bin, "gem", %(echo "gem $*" >> #{calls.dump}\n[ "$1" = spec ] && exit #{published ? 0 : 2}\nexit 0))
+      env = { "PATH" => "#{bin}:#{ENV.fetch("PATH")}", "HOME" => dir, "version" => "1.0.0", "GEM_HOST_API_KEY" => "the-key" }
+      _output, status = Open3.capture2e(env, "bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script, chdir: dir)
+      [status.success?, File.exist?(calls) ? File.readlines(calls, chomp: true) : []]
+    end
+  end
+
+  def write_stub(bin, name, body)
+    path = File.join(bin, name)
+    File.write(path, "#!/bin/bash\n#{body}\n")
+    File.chmod(0o755, path)
   end
 
   # Runs the generated dummy app's config/boot.rb in a clean Ruby process, as the test

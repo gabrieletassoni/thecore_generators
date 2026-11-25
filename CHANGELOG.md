@@ -1,3 +1,12 @@
+## 3.17.1
+
+- ATOM generator: the generated `gempush.yml` can be rerun after a failed tag push (host
+  Odoo #6259 in mytask-imas). The publish step skips `gem push` for a version the gem host already
+  has, which would otherwise fail on "Repushing of gem versions is not allowed", and the tag and the
+  release follow. RubyGems is asked through `api/v2/rubygems/<gem>/versions/<version>.json`; a
+  `--gem-host` through `gem spec --remote` with the same key, falling back to the push if the key
+  can't read. This gem's own `gempush.yml` does the same.
+
 ## 3.17.0
 
 - App template: on-demand system tests (#28, ADR 0010 in `thecore`). It fetches
